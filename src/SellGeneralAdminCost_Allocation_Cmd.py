@@ -1,76 +1,189 @@
-# //////////////////////////////
-# Main editable file
-#
-# All implementation must be done in this file.
-# Other Python files under src/ are reference-only
-# and must not be modified.
-# //////////////////////////////
-
 # -*- coding: utf-8 -*-
-# ///////////////////////////////////////////////////////////////
-#
-# make_manhour_to_sheet8_01_0001.py
-#
-# 役割:
-#   単一のジョブカン工数 CSV を入力として、
-#   正解スクリプト群を (1)〜(7) の順で直列実行し、
-#   Sheet7.tsv / Sheet8.tsv / Sheet9.tsv までを
-#   同一フォルダに生成する。
-#
-# 実行例:
-#   python make_manhour_to_sheet8_01_0001.py manhour_xxxxxx.csv
-#
-# ///////////////////////////////////////////////////////////////
+"""
+SellGeneralAdminCost_Allocation_Cmd.py
+
+販管費配賦（工数付与）TSV を生成する。
+
+入力:
+  1) 工数_yyyy年mm月_step10_各プロジェクトの工数.tsv
+  2) 損益計算書_yyyy年mm月_A∪B_プロジェクト名_C∪D_vertical.tsv
+
+出力:
+  損益計算書_yyyy年mm月_販管費配賦_A∪B_プロジェクト名_C∪D_vertical.tsv
+
+処理:
+  損益計算書TSVの各行に対し、
+  プロジェクト行(A/C/J/Pで始まり、"_"までのキー)のみ
+  工数TSVに同一キーがある場合は工数を、
+  無い場合は 0:00:00 を末尾に追加する。
+  非プロジェクト行はそのまま出力する。
+"""
 
 from __future__ import annotations
 
-import argparse
-import csv
 import os
-import re
 import shutil
-import tkinter as tk
-from tkinter import messagebox
-from pathlib import Path
-from typing import Any, Dict, List, Tuple
-import pandas as pd
-from SellGeneralAdminCost_Allocation_Cmd import (
-    build_step0003_rows,
-    build_step0004_rows_for_summary,
-    build_step0005_rows_for_summary,
-    build_step0006_rows_for_summary,
-    combine_company_sg_admin_columns,
-    load_org_table_company_map,
-    read_tsv_rows,
-    write_tsv_rows,
-)
+import re
+import sys
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Dict, List, Optional, Tuple
 
 
-def write_debug_error(pszMessage: str, objBaseDirectoryPath: Path | None = None) -> None:
-    pszFileName: str = "make_manhour_to_sheet8_01_0001_error.txt"
-    objErrorPath: Path = (
-        objBaseDirectoryPath / pszFileName if objBaseDirectoryPath is not None else Path(pszFileName)
+def print_usage() -> None:
+    pszUsage: str = (
+        "Usage: python SellGeneralAdminCost_Allocation_Cmd.py "
+        "<manhour_tsv_path> <pl_tsv_path> [output_tsv_path]\n"
+        "   or: python SellGeneralAdminCost_Allocation_Cmd.py "
+        "<manhour_tsv_path> <pl_tsv_path> <manhour_tsv_path> <pl_tsv_path> ...\n"
+        "   or: python SellGeneralAdminCost_Allocation_Cmd.py "
+        "<manhour_tsv_path> ... <pl_tsv_path> ..."
     )
-    with open(objErrorPath, mode="a", encoding="utf-8") as objFile:
-        objFile.write(pszMessage + "\n")
+    print(pszUsage)
 
 
-def read_tsv_rows(pszPath: str) -> List[List[str]]:
-    objRows: List[List[str]] = []
-    if not os.path.isfile(pszPath):
-        return objRows
-    with open(pszPath, "r", encoding="utf-8", newline="") as objFile:
-        objReader = csv.reader(objFile, delimiter="\t")
-        for objRow in objReader:
-            objRows.append(list(objRow))
-    return objRows
+def build_default_output_path(pszInputPlPath: str) -> str:
+    pszDirectory: str
+    pszFileName: str
+    pszDirectory, pszFileName = os.path.split(pszInputPlPath)
+
+    pszStem: str
+    pszExt: str
+    pszStem, pszExt = os.path.splitext(pszFileName)
+    if pszExt == "":
+        pszExt = ".tsv"
+
+    pszTargetMarker: str = "損益計算書_"
+    pszSuffix: str = "販管費配賦_"
+    pszStepMarker: str = "販管費配賦_step0010_"
+    pszStepMarkerOld: str = "販管費配賦_step0001_"
+    pszStepMarkerPrevious: str = "販管費配賦_step0002_"
+    pszStepMarkerCurrent: str = "販管費配賦_step0007_"
+    pszStepMarkerNext: str = "販管費配賦_step0008_"
+    pszStepMarkerAfterNext: str = "販管費配賦_step0009_"
+
+    if pszStepMarkerOld in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerOld, pszStepMarker, 1)
+    elif pszStepMarkerPrevious in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerPrevious, pszStepMarker, 1)
+    elif pszStepMarkerCurrent in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerCurrent, pszStepMarker, 1)
+    elif pszStepMarkerNext in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerNext, pszStepMarker, 1)
+    elif pszStepMarkerAfterNext in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerAfterNext, pszStepMarker, 1)
+    elif pszTargetMarker in pszStem and pszSuffix not in pszStem:
+        pszOutputStem = pszStem.replace(pszTargetMarker, pszTargetMarker + pszStepMarker, 1)
+    elif pszSuffix in pszStem and pszStepMarker not in pszStem:
+        pszOutputStem = pszStem.replace(pszSuffix, pszStepMarker, 1)
+    else:
+        pszOutputStem = pszStem + "_販管費配賦"
+
+    pszOutputFileName: str = pszOutputStem + pszExt
+    pszOutputPath: str = os.path.join(pszDirectory, pszOutputFileName)
+    return pszOutputPath
 
 
-def write_tsv_rows(pszPath: str, objRows: List[List[str]]) -> None:
-    with open(pszPath, "w", encoding="utf-8", newline="") as objFile:
-        objWriter = csv.writer(objFile, delimiter="\t", lineterminator="\n")
-        for objRow in objRows:
-            objWriter.writerow(objRow)
+def build_output_path_with_step(pszInputPlPath: str, pszStepMarker: str) -> str:
+    pszDirectory: str
+    pszFileName: str
+    pszDirectory, pszFileName = os.path.split(pszInputPlPath)
+
+    pszStem: str
+    pszExt: str
+    pszStem, pszExt = os.path.splitext(pszFileName)
+    if pszExt == "":
+        pszExt = ".tsv"
+
+    pszTargetMarker: str = "損益計算書_"
+    pszSuffix: str = "販管費配賦_"
+    pszStepMarkerOld: str = "販管費配賦_step0001_"
+    pszStepMarkerCurrent: str = "販管費配賦_step0002_"
+    pszStepMarkerNext: str = "販管費配賦_step0007_"
+    pszStepMarkerAfterNext: str = "販管費配賦_step0008_"
+    pszStepMarkerAfterAfterNext: str = "販管費配賦_step0009_"
+
+    if pszStepMarkerOld in pszStem:
+        pszOutputStem: str = pszStem.replace(pszStepMarkerOld, pszStepMarker, 1)
+    elif pszStepMarkerCurrent in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerCurrent, pszStepMarker, 1)
+    elif pszStepMarkerNext in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerNext, pszStepMarker, 1)
+    elif pszStepMarkerAfterNext in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerAfterNext, pszStepMarker, 1)
+    elif pszStepMarkerAfterAfterNext in pszStem:
+        pszOutputStem = pszStem.replace(pszStepMarkerAfterAfterNext, pszStepMarker, 1)
+    elif pszTargetMarker in pszStem and pszSuffix not in pszStem:
+        pszOutputStem = pszStem.replace(pszTargetMarker, pszTargetMarker + pszStepMarker, 1)
+    elif pszSuffix in pszStem and pszStepMarker not in pszStem:
+        pszOutputStem = pszStem.replace(pszSuffix, pszStepMarker, 1)
+    else:
+        pszOutputStem = pszStem + "_販管費配賦"
+
+    pszOutputFileName: str = pszOutputStem + pszExt
+    pszOutputPath: str = os.path.join(pszDirectory, pszOutputFileName)
+    return pszOutputPath
+
+
+def extract_project_key(pszProjectName: str) -> Optional[str]:
+    pszText: str = (pszProjectName or "").strip()
+    if pszText == "":
+        return None
+    if re.match(r"^C\d{3}_", pszText):
+        return None
+
+    iUnderscoreIndex: int = pszText.find("_")
+    if iUnderscoreIndex <= 0:
+        pszKey = pszText.split(" ", 1)[0]
+    else:
+        pszKey = pszText[:iUnderscoreIndex]
+    if pszKey == "":
+        return None
+
+    cPrefix: str = pszKey[0]
+    if cPrefix in ("A", "C", "J", "P"):
+        return pszKey
+    return None
+
+
+def load_manhour_map(pszManhourPath: str) -> Dict[str, List[str]]:
+    objManhourMap: Dict[str, List[str]] = {}
+    with open(pszManhourPath, "r", encoding="utf-8", newline="") as objInputFile:
+        for pszLine in objInputFile:
+            pszLineText: str = pszLine.rstrip("\n").rstrip("\r")
+            if pszLineText == "":
+                continue
+
+            objParts: List[str] = pszLineText.split("\t")
+            pszFirstColumn: str = objParts[0] if objParts else ""
+
+            pszKey: Optional[str] = extract_project_key(pszFirstColumn)
+            if pszKey is None:
+                continue
+
+            objManhourValues: List[str] = objParts[-6:] if len(objParts) >= 7 else []
+            if len(objManhourValues) < 6:
+                objManhourValues.extend([""] * (6 - len(objManhourValues)))
+            objManhourMap[pszKey] = objManhourValues
+
+    return objManhourMap
+
+
+def load_company_map(pszManhourPath: str) -> Dict[str, str]:
+    objCompanyMap: Dict[str, str] = {}
+    with open(pszManhourPath, "r", encoding="utf-8", newline="") as objInputFile:
+        for pszLine in objInputFile:
+            pszLineText: str = pszLine.rstrip("\n").rstrip("\r")
+            if pszLineText == "":
+                continue
+            objParts: List[str] = pszLineText.split("\t")
+            if not objParts:
+                continue
+            pszKey: Optional[str] = extract_project_key(objParts[0])
+            if pszKey is None:
+                continue
+            pszCompany: str = objParts[1] if len(objParts) >= 2 else ""
+            objCompanyMap[pszKey] = pszCompany
+    return objCompanyMap
 
 
 def parse_number(pszText: str) -> float:
@@ -83,6 +196,24 @@ def parse_number(pszText: str) -> float:
         return 0.0
 
 
+def parse_time_to_seconds(pszTimeText: str) -> float:
+    pszValue: str = (pszTimeText or "").strip()
+    if pszValue == "":
+        return 0.0
+
+    objParts: List[str] = pszValue.split(":")
+    if len(objParts) != 3:
+        return 0.0
+    try:
+        iHours: int = int(objParts[0])
+        iMinutes: int = int(objParts[1])
+        iSeconds: int = int(objParts[2])
+    except ValueError:
+        return 0.0
+
+    return float(iHours * 3600 + iMinutes * 60 + iSeconds)
+
+
 def format_number(fValue: float) -> str:
     if abs(fValue - round(fValue)) < 0.0000001:
         return str(int(round(fValue)))
@@ -91,54 +222,1621 @@ def format_number(fValue: float) -> str:
     return pszText
 
 
-def combine_company_sg_admin_columns(objRows: List[List[str]]) -> List[List[str]]:
+def calculate_allocation(
+    objRows: List[List[str]],
+    iSellGeneralAdminCostColumnIndex: int,
+    iAllocationColumnIndex: int,
+    iManhourColumnIndex: int,
+) -> None:
+    iRowIndexTotal: int = 1
+    iRowIndexAllocationStart: int = 3
+    iRowIndexAllocationEnd: int = 7
+    iRowIndexProjectStart: int = 10
+    iRowIndexProjectEnd: int = 123
+
+    fSellGeneralAdminCostTotal: float = 0.0
+    if iRowIndexTotal < len(objRows) and iSellGeneralAdminCostColumnIndex >= 0:
+        objRowTotal: List[str] = objRows[iRowIndexTotal]
+        if iSellGeneralAdminCostColumnIndex < len(objRowTotal):
+            fSellGeneralAdminCostTotal = parse_number(objRowTotal[iSellGeneralAdminCostColumnIndex])
+
+    fAllocatedSum: float = 0.0
+    for iRowIndex in range(iRowIndexAllocationStart, iRowIndexAllocationEnd + 1):
+        if iRowIndex >= len(objRows):
+            break
+        objRow: List[str] = objRows[iRowIndex]
+        if iAllocationColumnIndex < len(objRow):
+            fAllocatedSum += parse_number(objRow[iAllocationColumnIndex])
+
+    fSellGeneralAdminCostAllocation: float = fSellGeneralAdminCostTotal - fAllocatedSum
+
+    fTotalManhours: float = 0.0
+    for iRowIndex in range(iRowIndexProjectStart, iRowIndexProjectEnd + 1):
+        if iRowIndex >= len(objRows):
+            break
+        objRow: List[str] = objRows[iRowIndex]
+        if iManhourColumnIndex < len(objRow):
+            fTotalManhours += parse_time_to_seconds(objRow[iManhourColumnIndex])
+
+    if fTotalManhours <= 0.0:
+        return
+
+    for iRowIndex in range(iRowIndexProjectStart, iRowIndexProjectEnd + 1):
+        if iRowIndex >= len(objRows):
+            break
+        objRow = objRows[iRowIndex]
+        if iManhourColumnIndex >= len(objRow):
+            continue
+        fManhourSeconds: float = parse_time_to_seconds(objRow[iManhourColumnIndex])
+        fAllocation: float = fSellGeneralAdminCostAllocation * fManhourSeconds / fTotalManhours
+        fAllocation = float(int(round(fAllocation)))
+
+        if iAllocationColumnIndex >= len(objRow):
+            iAppendCount: int = iAllocationColumnIndex + 1 - len(objRow)
+            objRow.extend([""] * iAppendCount)
+        objRow[iAllocationColumnIndex] = format_number(fAllocation)
+        objRows[iRowIndex] = objRow
+
+
+def recalculate_operating_profit(
+    objRows: List[List[str]],
+    iGrossProfitColumnIndex: int,
+    iOperatingProfitColumnIndex: int,
+    objExcludeColumns: Optional[List[int]] = None,
+) -> None:
+    if iGrossProfitColumnIndex < 0 or iOperatingProfitColumnIndex < 0:
+        return
+    if iOperatingProfitColumnIndex <= iGrossProfitColumnIndex:
+        return
+    objExcludeSet = set(objExcludeColumns or [])
+
+    for iRowIndex in range(1, len(objRows)):
+        objRow: List[str] = objRows[iRowIndex]
+        if iGrossProfitColumnIndex >= len(objRow):
+            continue
+
+        fGrossProfit: float = parse_number(objRow[iGrossProfitColumnIndex])
+        fDeductionSum: float = 0.0
+        for iColumnIndex in range(iGrossProfitColumnIndex + 1, iOperatingProfitColumnIndex):
+            if iColumnIndex in objExcludeSet:
+                continue
+            if iColumnIndex >= len(objRow):
+                continue
+            fDeductionSum += parse_number(objRow[iColumnIndex])
+
+        fOperatingProfit: float = fGrossProfit - fDeductionSum
+        if iOperatingProfitColumnIndex >= len(objRow):
+            iAppendCount: int = iOperatingProfitColumnIndex + 1 - len(objRow)
+            objRow.extend([""] * iAppendCount)
+        objRow[iOperatingProfitColumnIndex] = format_number(fOperatingProfit)
+        objRows[iRowIndex] = objRow
+
+
+def recalculate_ordinary_profit(
+    objRows: List[List[str]],
+    iOperatingProfitColumnIndex: int,
+    iNonOperatingIncomeColumnIndex: int,
+    iNonOperatingExpenseColumnIndex: int,
+    iOrdinaryProfitColumnIndex: int,
+) -> None:
+    if (
+        iOperatingProfitColumnIndex < 0
+        or iNonOperatingIncomeColumnIndex < 0
+        or iNonOperatingExpenseColumnIndex < 0
+        or iOrdinaryProfitColumnIndex < 0
+    ):
+        return
+    if iOperatingProfitColumnIndex >= iNonOperatingIncomeColumnIndex:
+        return
+    if iNonOperatingIncomeColumnIndex >= iNonOperatingExpenseColumnIndex:
+        return
+    if iNonOperatingExpenseColumnIndex >= iOrdinaryProfitColumnIndex:
+        return
+
+    for iRowIndex in range(1, len(objRows)):
+        objRow: List[str] = objRows[iRowIndex]
+        if iOperatingProfitColumnIndex >= len(objRow):
+            continue
+
+        fNonOperatingIncome: float = 0.0
+        for iColumnIndex in range(iOperatingProfitColumnIndex + 1, iNonOperatingIncomeColumnIndex):
+            if iColumnIndex >= len(objRow):
+                continue
+            fNonOperatingIncome += parse_number(objRow[iColumnIndex])
+
+        fNonOperatingExpense: float = 0.0
+        for iColumnIndex in range(iNonOperatingIncomeColumnIndex + 1, iNonOperatingExpenseColumnIndex):
+            if iColumnIndex >= len(objRow):
+                continue
+            fNonOperatingExpense += parse_number(objRow[iColumnIndex])
+
+        if iNonOperatingIncomeColumnIndex >= len(objRow):
+            iAppendCount = iNonOperatingIncomeColumnIndex + 1 - len(objRow)
+            objRow.extend([""] * iAppendCount)
+        objRow[iNonOperatingIncomeColumnIndex] = format_number(fNonOperatingIncome)
+
+        if iNonOperatingExpenseColumnIndex >= len(objRow):
+            iAppendCount = iNonOperatingExpenseColumnIndex + 1 - len(objRow)
+            objRow.extend([""] * iAppendCount)
+        objRow[iNonOperatingExpenseColumnIndex] = format_number(fNonOperatingExpense)
+
+        fOperatingProfit: float = parse_number(objRow[iOperatingProfitColumnIndex])
+        fOrdinaryProfit: float = fOperatingProfit + fNonOperatingIncome - fNonOperatingExpense
+        if iOrdinaryProfitColumnIndex >= len(objRow):
+            iAppendCount = iOrdinaryProfitColumnIndex + 1 - len(objRow)
+            objRow.extend([""] * iAppendCount)
+        objRow[iOrdinaryProfitColumnIndex] = format_number(fOrdinaryProfit)
+        objRows[iRowIndex] = objRow
+
+
+def recalculate_pre_tax_profit(
+    objRows: List[List[str]],
+    iOrdinaryProfitColumnIndex: int,
+    iExtraordinaryIncomeColumnIndex: int,
+    iExtraordinaryLossColumnIndex: int,
+    iPreTaxProfitColumnIndex: int,
+) -> None:
+    if (
+        iOrdinaryProfitColumnIndex < 0
+        or iExtraordinaryIncomeColumnIndex < 0
+        or iExtraordinaryLossColumnIndex < 0
+        or iPreTaxProfitColumnIndex < 0
+    ):
+        return
+
+    for iRowIndex in range(1, len(objRows)):
+        objRow: List[str] = objRows[iRowIndex]
+        if iOrdinaryProfitColumnIndex >= len(objRow):
+            continue
+
+        fOrdinaryProfit: float = parse_number(objRow[iOrdinaryProfitColumnIndex])
+        fExtraordinaryIncome: float = 0.0
+        if iExtraordinaryIncomeColumnIndex < len(objRow):
+            fExtraordinaryIncome = parse_number(objRow[iExtraordinaryIncomeColumnIndex])
+        fExtraordinaryLoss: float = 0.0
+        if iExtraordinaryLossColumnIndex < len(objRow):
+            fExtraordinaryLoss = parse_number(objRow[iExtraordinaryLossColumnIndex])
+
+        fPreTaxProfit: float = fOrdinaryProfit + fExtraordinaryIncome - fExtraordinaryLoss
+        if iPreTaxProfitColumnIndex >= len(objRow):
+            iAppendCount: int = iPreTaxProfitColumnIndex + 1 - len(objRow)
+            objRow.extend([""] * iAppendCount)
+        objRow[iPreTaxProfitColumnIndex] = format_number(fPreTaxProfit)
+        objRows[iRowIndex] = objRow
+
+
+def recalculate_net_profit(
+    objRows: List[List[str]],
+    iCorporateTaxColumnIndex: int,
+    iCorporateTaxTotalColumnIndex: int,
+    iPreTaxProfitColumnIndex: int,
+    iNetProfitColumnIndex: int,
+) -> None:
+    if (
+        iCorporateTaxColumnIndex < 0
+        or iCorporateTaxTotalColumnIndex < 0
+        or iPreTaxProfitColumnIndex < 0
+        or iNetProfitColumnIndex < 0
+    ):
+        return
+
+    for iRowIndex in range(1, len(objRows)):
+        objRow: List[str] = objRows[iRowIndex]
+        if iCorporateTaxColumnIndex >= len(objRow):
+            continue
+
+        fCorporateTax: float = parse_number(objRow[iCorporateTaxColumnIndex])
+        if iCorporateTaxTotalColumnIndex >= len(objRow):
+            iAppendCount: int = iCorporateTaxTotalColumnIndex + 1 - len(objRow)
+            objRow.extend([""] * iAppendCount)
+        objRow[iCorporateTaxTotalColumnIndex] = format_number(fCorporateTax)
+
+        fPreTaxProfit: float = 0.0
+        if iPreTaxProfitColumnIndex < len(objRow):
+            fPreTaxProfit = parse_number(objRow[iPreTaxProfitColumnIndex])
+
+        fNetProfit: float = fPreTaxProfit - fCorporateTax
+        if iNetProfitColumnIndex >= len(objRow):
+            iAppendCount = iNetProfitColumnIndex + 1 - len(objRow)
+            objRow.extend([""] * iAppendCount)
+        objRow[iNetProfitColumnIndex] = format_number(fNetProfit)
+        objRows[iRowIndex] = objRow
+
+
+def allocate_company_sg_admin_cost(objRows: List[List[str]]) -> List[List[str]]:
     if not objRows:
-        return []
-    objHeader = objRows[0]
-    iAllocationIndex: int = -1
-    iCompanyIndices: List[int] = []
-    for iIndex, pszValue in enumerate(objHeader):
-        if pszValue == "配賦販管費":
-            iAllocationIndex = iIndex
-        if pszValue in [
-            "1Cカンパニー販管費",
-            "2Cカンパニー販管費",
-            "3Cカンパニー販管費",
-            "4Cカンパニー販管費",
-            "事業開発カンパニー販管費",
-        ]:
-            iCompanyIndices.append(iIndex)
-    if iAllocationIndex < 0 or not iCompanyIndices:
         return objRows
 
+    objHeader: List[str] = objRows[0]
+    objCompanyColumns: List[str] = [
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+    ]
+    objCompanyManhourColumns: List[str] = [
+        "1Cカンパニー販管費の工数",
+        "2Cカンパニー販管費の工数",
+        "3Cカンパニー販管費の工数",
+        "4Cカンパニー販管費の工数",
+        "事業開発カンパニー販管費の工数",
+    ]
+    objCompanyRows: List[str] = [
+        "C001_1Cカンパニー販管費",
+        "C002_2Cカンパニー販管費",
+        "C003_3Cカンパニー販管費",
+        "C004_4Cカンパニー販管費",
+        "C005_事業開発カンパニー販管費",
+    ]
+
+    objCompanyIndices: List[int] = [find_column_index(objHeader, pszName) for pszName in objCompanyColumns]
+    objManhourIndices: List[int] = [find_column_index(objHeader, pszName) for pszName in objCompanyManhourColumns]
+
+    objCompanyTotals: List[float] = [0.0] * len(objCompanyColumns)
+    for iRowIndex, objRow in enumerate(objRows):
+        if iRowIndex == 0:
+            continue
+        pszRowName: str = objRow[0] if objRow else ""
+        if pszRowName in objCompanyRows:
+            iCompany: int = objCompanyRows.index(pszRowName)
+            iCompanyColumn: int = objCompanyIndices[iCompany]
+            if 0 <= iCompanyColumn < len(objRow):
+                objCompanyTotals[iCompany] = parse_number(objRow[iCompanyColumn])
+
+    # zero initialize all company cost columns
     objOutputRows: List[List[str]] = []
-    objOutputRows.append(list(objHeader))
-    for objRow in objRows[1:]:
+    for iRowIndex, objRow in enumerate(objRows):
         objNewRow: List[str] = list(objRow)
-        fTotal: float = 0.0
-        for iIndex in iCompanyIndices:
-            if iIndex < len(objRow):
-                fTotal += parse_number(objRow[iIndex])
-        if iAllocationIndex < len(objNewRow):
-            objNewRow[iAllocationIndex] = format_number(fTotal)
+        if iRowIndex > 0:
+            for iCompanyColumn in objCompanyIndices:
+                if iCompanyColumn >= 0:
+                    if len(objNewRow) <= iCompanyColumn:
+                        objNewRow.extend([""] * (iCompanyColumn + 1 - len(objNewRow)))
+                    objNewRow[iCompanyColumn] = "0"
         objOutputRows.append(objNewRow)
+
+    # allocate per company
+    for iCompany, pszCompanyColumn in enumerate(objCompanyColumns):
+        iCompanyColumn: int = objCompanyIndices[iCompany]
+        iManhourColumn: int = objManhourIndices[iCompany]
+        if iCompanyColumn < 0 or iManhourColumn < 0:
+            continue
+
+        fCompanyTotal: float = objCompanyTotals[iCompany]
+        fTotalSeconds: float = 0.0
+        for iRowIndex, objRow in enumerate(objOutputRows):
+            if iRowIndex == 0 or iManhourColumn >= len(objRow):
+                continue
+            fSeconds: float = parse_time_to_seconds(objRow[iManhourColumn])
+            if fSeconds > 0.0:
+                fTotalSeconds += fSeconds
+
+        if fTotalSeconds <= 0.0:
+            continue
+
+        for iRowIndex, objRow in enumerate(objOutputRows):
+            if iRowIndex == 0 or iManhourColumn >= len(objRow) or iCompanyColumn >= len(objRow):
+                continue
+            fSeconds = parse_time_to_seconds(objRow[iManhourColumn])
+            if fSeconds <= 0.0:
+                continue
+            fAllocation: float = fCompanyTotal * fSeconds / fTotalSeconds
+            fAllocation = float(int(round(fAllocation)))
+            objRow[iCompanyColumn] = format_number(fAllocation)
+            objOutputRows[iRowIndex] = objRow
+
+    return objOutputRows
+
+
+def insert_company_sg_admin_cost_columns(objRows: List[List[str]]) -> List[List[str]]:
+    if not objRows:
+        return objRows
+
+    objHeader: List[str] = objRows[0]
+    iAllocationIndex: int = find_column_index(objHeader, "配賦販管費")
+    iOperatingProfitIndex: int = find_column_index(objHeader, "営業利益")
+    if iAllocationIndex < 0 or iOperatingProfitIndex < 0:
+        return objRows
+
+    iInsertIndex: int = iAllocationIndex + 1
+    objNewColumns: List[str] = [
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+    ]
+    objNewHeader: List[str] = (
+        objHeader[:iInsertIndex] + objNewColumns + objHeader[iInsertIndex:]
+    )
+
+    iGrossProfitIndex: int = find_column_index(objNewHeader, "売上総利益")
+    iSellGeneralAdminTotalIndex: int = find_column_index(objNewHeader, "販売費及び一般管理費計")
+
+    objTargetMap: Dict[str, str] = {
+        "C001_1Cカンパニー販管費": "1Cカンパニー販管費",
+        "C002_2Cカンパニー販管費": "2Cカンパニー販管費",
+        "C003_3Cカンパニー販管費": "3Cカンパニー販管費",
+        "C004_4Cカンパニー販管費": "4Cカンパニー販管費",
+        "C005_事業開発カンパニー販管費": "事業開発カンパニー販管費",
+    }
+    objTargetColumnIndices: Dict[str, int] = {
+        pszColumnName: find_column_index(objNewHeader, pszColumnName)
+        for pszColumnName in objNewColumns
+    }
+
+    objOutputRows: List[List[str]] = [objNewHeader]
+    for objRow in objRows[1:]:
+        objNewRow: List[str] = objRow[:iInsertIndex] + [""] * len(objNewColumns) + objRow[iInsertIndex:]
+
+        pszRowName: str = objNewRow[0] if objNewRow else ""
+        pszTargetColumn: Optional[str] = objTargetMap.get(pszRowName)
+        if (
+            pszTargetColumn is not None
+            and iGrossProfitIndex >= 0
+            and iSellGeneralAdminTotalIndex > iGrossProfitIndex + 1
+        ):
+            fSum: float = 0.0
+            iEndIndex: int = min(iSellGeneralAdminTotalIndex, len(objNewRow))
+            for iColumnIndex in range(iGrossProfitIndex + 1, iEndIndex):
+                fSum += parse_number(objNewRow[iColumnIndex])
+            iTargetIndex: int = objTargetColumnIndices.get(pszTargetColumn, -1)
+            if iTargetIndex >= 0:
+                objNewRow[iTargetIndex] = format_number(fSum)
+
+        if len(objNewRow) < len(objNewHeader):
+            objNewRow.extend([""] * (len(objNewHeader) - len(objNewRow)))
+        objOutputRows.append(objNewRow)
+
+    return objOutputRows
+
+
+def process_pl_tsv(
+    pszPlPath: str,
+    pszOutputPath: str,
+    pszOutputStep0001Path: str,
+    pszOutputStep0002Path: str,
+    pszOutputStep0003ZeroPath: str,
+    pszOutputStep0007Path: str,
+    pszOutputStep0008Path: str,
+    pszOutputStep0009Path: str,
+    pszOutputStep0005Path: str,
+    pszOutputStep0006Path: str,
+    pszOutputStep0010Path: str,
+    pszOutputFinalPath: str,
+    objManhourMap: Dict[str, List[str]],
+    objCompanyMap: Dict[str, str],
+) -> None:
+    objRows: List[List[str]] = []
+    with open(pszPlPath, "r", encoding="utf-8", newline="") as objInputFile:
+        for pszLine in objInputFile:
+            pszLineText: str = pszLine.rstrip("\n").rstrip("\r")
+            objRows.append(pszLineText.split("\t") if pszLineText != "" else [""])
+
+    for iRowIndex, objRow in enumerate(objRows):
+        pszFirstColumn: str = objRow[0] if objRow else ""
+        if iRowIndex == 0:
+            if len(objRow) == 0:
+                objRow = [""]
+            objRow.extend(
+                [
+                    "工数",
+                    "1Cカンパニー販管費の工数",
+                    "2Cカンパニー販管費の工数",
+                    "3Cカンパニー販管費の工数",
+                    "4Cカンパニー販管費の工数",
+                    "事業開発カンパニー販管費の工数",
+                ]
+            )
+            objRows[iRowIndex] = objRow
+            continue
+
+        pszKey: Optional[str] = extract_project_key(pszFirstColumn)
+        if pszKey is None:
+            continue
+
+        objManhours: List[str] = objManhourMap.get(pszKey, [])
+        if len(objManhours) < 6:
+            objManhours = objManhours + ["0:00:00"] * (6 - len(objManhours))
+
+        objRow.extend(objManhours[:6])
+        objRows[iRowIndex] = objRow
+
+    with open(pszOutputStep0001Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objRows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    iSellGeneralAdminCostColumnIndex: int = -1
+    iAllocationColumnIndex: int = -1
+    iManhourColumnIndex: int = -1
+    if objRows:
+        objHeaderRow: List[str] = objRows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "販売費及び一般管理費計":
+                iSellGeneralAdminCostColumnIndex = iColumnIndex
+            elif pszColumnName == "配賦販管費":
+                iAllocationColumnIndex = iColumnIndex
+            elif pszColumnName == "工数":
+                iManhourColumnIndex = iColumnIndex
+
+    if iSellGeneralAdminCostColumnIndex >= 0 and iAllocationColumnIndex >= 0 and iManhourColumnIndex >= 0:
+        calculate_allocation(
+            objRows,
+            iSellGeneralAdminCostColumnIndex,
+            iAllocationColumnIndex,
+            iManhourColumnIndex,
+        )
+
+    with open(pszOutputStep0002Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objRows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    # step0004の処理
+    # ここから
+    objZeroRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    if objZeroRows:
+        objHeaderZero: List[str] = objZeroRows[0]
+        objTargetColumns: List[str] = [
+            "1Cカンパニー販管費の工数",
+            "2Cカンパニー販管費の工数",
+            "3Cカンパニー販管費の工数",
+            "4Cカンパニー販管費の工数",
+            "事業開発カンパニー販管費の工数",
+        ]
+        objTargetIndices: List[int] = [
+            find_column_index(objHeaderZero, pszColumn) for pszColumn in objTargetColumns
+        ]
+        for iRowIndex, objRow in enumerate(objZeroRows):
+            if iRowIndex < 3:
+                continue
+            for iColumnIndex in objTargetIndices:
+                if 0 <= iColumnIndex < len(objRow):
+                    objRow[iColumnIndex] = "0:00:00"
+            objZeroRows[iRowIndex] = objRow
+
+    with open(pszOutputStep0003ZeroPath, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objZeroRows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    pszOutputStep0004Path: str = pszOutputStep0003ZeroPath.replace("step0003_", "step0004_", 1)
+    iManhourColumnIndexZero: int = find_column_index(objZeroRows[0], "工数") if objZeroRows else -1
+    objTargetColumnsZero: List[str] = [
+        "1Cカンパニー販管費の工数",
+        "2Cカンパニー販管費の工数",
+        "3Cカンパニー販管費の工数",
+        "4Cカンパニー販管費の工数",
+        "事業開発カンパニー販管費の工数",
+    ]
+    objTargetIndicesZero: List[int] = [
+        find_column_index(objZeroRows[0], pszColumn) if objZeroRows else -1 for pszColumn in objTargetColumnsZero
+    ]
+    bSeenHeadquarter: bool = False
+    for iRowIndex, objRow in enumerate(objZeroRows):
+        if not objRow:
+            continue
+        pszName: str = objRow[0]
+        if pszName == "本部":
+            bSeenHeadquarter = True
+            continue
+        if not bSeenHeadquarter:
+            continue
+        if pszName.startswith("C"):
+            for iColumnIndex in objTargetIndicesZero:
+                if 0 <= iColumnIndex < len(objRow):
+                    objRow[iColumnIndex] = "0:00:00"
+            objZeroRows[iRowIndex] = objRow
+            continue
+        pszKey: Optional[str] = extract_project_key(pszName)
+        if pszKey is None:
+            continue
+        pszCompany: str = objCompanyMap.get(pszKey, "")
+        iTargetColumn: int = -1
+        if pszCompany == "第一インキュ":
+            iTargetColumn = objTargetIndicesZero[0] if len(objTargetIndicesZero) > 0 else -1
+        elif pszCompany == "第二インキュ":
+            iTargetColumn = objTargetIndicesZero[1] if len(objTargetIndicesZero) > 1 else -1
+        elif pszCompany == "第三インキュ":
+            iTargetColumn = objTargetIndicesZero[2] if len(objTargetIndicesZero) > 2 else -1
+        elif pszCompany == "第四インキュ":
+            iTargetColumn = objTargetIndicesZero[3] if len(objTargetIndicesZero) > 3 else -1
+        elif pszCompany == "事業開発":
+            iTargetColumn = objTargetIndicesZero[4] if len(objTargetIndicesZero) > 4 else -1
+        if iTargetColumn >= 0:
+            if len(objRow) <= iTargetColumn:
+                objRow.extend([""] * (iTargetColumn + 1 - len(objRow)))
+            pszManhourValue: str = "0:00:00"
+            if iManhourColumnIndexZero >= 0 and iManhourColumnIndexZero < len(objRow):
+                pszManhourValue = objRow[iManhourColumnIndexZero] or "0:00:00"
+            for iColumnIndex in objTargetIndicesZero:
+                if 0 <= iColumnIndex < len(objRow):
+                    objRow[iColumnIndex] = "0:00:00"
+            objRow[iTargetColumn] = pszManhourValue
+        else:
+            for iColumnIndex in objTargetIndicesZero:
+                if 0 <= iColumnIndex < len(objRow):
+                    objRow[iColumnIndex] = "0:00:00"
+        objZeroRows[iRowIndex] = objRow
+
+    with open(pszOutputStep0004Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objZeroRows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+    # step0004の処理
+    # ここまで
+
+    iGrossProfitColumnIndex: int = -1
+    iOperatingProfitColumnIndex: int = -1
+    if objRows:
+        objHeaderRow = objRows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "売上総利益":
+                iGrossProfitColumnIndex = iColumnIndex
+            elif pszColumnName == "営業利益":
+                iOperatingProfitColumnIndex = iColumnIndex
+
+    if iGrossProfitColumnIndex >= 0 and iOperatingProfitColumnIndex >= 0:
+        recalculate_operating_profit(
+            objRows,
+            iGrossProfitColumnIndex,
+            iOperatingProfitColumnIndex,
+            [],
+        )
+
+    iNonOperatingIncomeColumnIndex: int = -1
+    iNonOperatingExpenseColumnIndex: int = -1
+    iOrdinaryProfitColumnIndex: int = -1
+    if objRows:
+        objHeaderRow = objRows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "営業外収益":
+                iNonOperatingIncomeColumnIndex = iColumnIndex
+            elif pszColumnName == "営業外費用":
+                iNonOperatingExpenseColumnIndex = iColumnIndex
+            elif pszColumnName == "経常利益":
+                iOrdinaryProfitColumnIndex = iColumnIndex
+
+    if (
+        iOperatingProfitColumnIndex >= 0
+        and iNonOperatingIncomeColumnIndex >= 0
+        and iNonOperatingExpenseColumnIndex >= 0
+        and iOrdinaryProfitColumnIndex >= 0
+    ):
+        recalculate_ordinary_profit(
+            objRows,
+            iOperatingProfitColumnIndex,
+            iNonOperatingIncomeColumnIndex,
+            iNonOperatingExpenseColumnIndex,
+            iOrdinaryProfitColumnIndex,
+        )
+
+    iExtraordinaryIncomeColumnIndex: int = -1
+    iExtraordinaryLossColumnIndex: int = -1
+    iPreTaxProfitColumnIndex: int = -1
+    if objRows:
+        objHeaderRow = objRows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "特別利益":
+                iExtraordinaryIncomeColumnIndex = iColumnIndex
+            elif pszColumnName == "特別損失":
+                iExtraordinaryLossColumnIndex = iColumnIndex
+            elif pszColumnName == "税引前当期純利益":
+                iPreTaxProfitColumnIndex = iColumnIndex
+
+    if (
+        iOrdinaryProfitColumnIndex >= 0
+        and iExtraordinaryIncomeColumnIndex >= 0
+        and iExtraordinaryLossColumnIndex >= 0
+        and iPreTaxProfitColumnIndex >= 0
+    ):
+        recalculate_pre_tax_profit(
+            objRows,
+            iOrdinaryProfitColumnIndex,
+            iExtraordinaryIncomeColumnIndex,
+            iExtraordinaryLossColumnIndex,
+            iPreTaxProfitColumnIndex,
+        )
+
+    objRows = insert_company_sg_admin_cost_columns(objRows)
+
+    with open(pszOutputStep0005Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objRows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    objRows = allocate_company_sg_admin_cost(objRows)
+
+    iCorporateTaxColumnIndex: int = -1
+    iCorporateTaxTotalColumnIndex: int = -1
+    iNetProfitColumnIndex: int = -1
+    if objRows:
+        objHeaderRow = objRows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "法人税、住民税及び事業税":
+                iCorporateTaxColumnIndex = iColumnIndex
+            elif pszColumnName == "法人税等":
+                iCorporateTaxTotalColumnIndex = iColumnIndex
+            elif pszColumnName == "当期純利益":
+                iNetProfitColumnIndex = iColumnIndex
+
+    if (
+        iCorporateTaxColumnIndex >= 0
+        and iCorporateTaxTotalColumnIndex >= 0
+        and iPreTaxProfitColumnIndex >= 0
+        and iNetProfitColumnIndex >= 0
+    ):
+        recalculate_net_profit(
+            objRows,
+            iCorporateTaxColumnIndex,
+            iCorporateTaxTotalColumnIndex,
+            iPreTaxProfitColumnIndex,
+            iNetProfitColumnIndex,
+        )
+
+    with open(pszOutputStep0006Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objRows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    # step0007: 営業利益の再計算（入力は step0006）
+    objStep0007Rows: List[List[str]] = [list(objRow) for objRow in objRows]
+    iGrossProfitColumnIndex: int = -1
+    iOperatingProfitColumnIndex: int = -1
+    iSellGeneralAdminTotalIndex: int = -1
+    if objStep0007Rows:
+        objHeaderRow = objStep0007Rows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "売上総利益":
+                iGrossProfitColumnIndex = iColumnIndex
+            elif pszColumnName == "営業利益":
+                iOperatingProfitColumnIndex = iColumnIndex
+            elif pszColumnName == "販売費及び一般管理費計":
+                iSellGeneralAdminTotalIndex = iColumnIndex
+
+    if iGrossProfitColumnIndex >= 0 and iOperatingProfitColumnIndex >= 0:
+        recalculate_operating_profit(
+            objStep0007Rows,
+            iGrossProfitColumnIndex,
+            iOperatingProfitColumnIndex,
+            [iSellGeneralAdminTotalIndex] if iSellGeneralAdminTotalIndex >= 0 else [],
+        )
+
+    with open(pszOutputStep0007Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objStep0007Rows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    # step0008: 営業外収益・費用、経常利益の再計算（入力は step0007）
+    objStep0008Rows: List[List[str]] = [list(objRow) for objRow in objStep0007Rows]
+    iNonOperatingIncomeColumnIndex: int = -1
+    iNonOperatingExpenseColumnIndex: int = -1
+    iOrdinaryProfitColumnIndex: int = -1
+    if objStep0008Rows:
+        objHeaderRow = objStep0008Rows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "営業外収益":
+                iNonOperatingIncomeColumnIndex = iColumnIndex
+            elif pszColumnName == "営業外費用":
+                iNonOperatingExpenseColumnIndex = iColumnIndex
+            elif pszColumnName == "経常利益":
+                iOrdinaryProfitColumnIndex = iColumnIndex
+
+    if (
+        iOperatingProfitColumnIndex >= 0
+        and iNonOperatingIncomeColumnIndex >= 0
+        and iNonOperatingExpenseColumnIndex >= 0
+        and iOrdinaryProfitColumnIndex >= 0
+    ):
+        recalculate_ordinary_profit(
+            objStep0008Rows,
+            iOperatingProfitColumnIndex,
+            iNonOperatingIncomeColumnIndex,
+            iNonOperatingExpenseColumnIndex,
+            iOrdinaryProfitColumnIndex,
+        )
+
+    with open(pszOutputStep0008Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objStep0008Rows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    # step0009: 税引前当期純利益の再計算（入力は step0008）
+    objStep0009Rows: List[List[str]] = [list(objRow) for objRow in objStep0008Rows]
+    iExtraordinaryIncomeColumnIndex: int = -1
+    iExtraordinaryLossColumnIndex: int = -1
+    iPreTaxProfitColumnIndex: int = -1
+    if objStep0009Rows:
+        objHeaderRow = objStep0009Rows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "特別利益":
+                iExtraordinaryIncomeColumnIndex = iColumnIndex
+            elif pszColumnName == "特別損失":
+                iExtraordinaryLossColumnIndex = iColumnIndex
+            elif pszColumnName == "税引前当期純利益":
+                iPreTaxProfitColumnIndex = iColumnIndex
+
+    if (
+        iOrdinaryProfitColumnIndex >= 0
+        and iExtraordinaryIncomeColumnIndex >= 0
+        and iExtraordinaryLossColumnIndex >= 0
+        and iPreTaxProfitColumnIndex >= 0
+    ):
+        recalculate_pre_tax_profit(
+            objStep0009Rows,
+            iOrdinaryProfitColumnIndex,
+            iExtraordinaryIncomeColumnIndex,
+            iExtraordinaryLossColumnIndex,
+            iPreTaxProfitColumnIndex,
+        )
+
+    with open(pszOutputStep0009Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objStep0009Rows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    objStep0010Rows: List[List[str]] = [list(objRow) for objRow in objStep0009Rows]
+    iCorporateTaxColumnIndexStep0010: int = -1
+    iCorporateTaxTotalColumnIndexStep0010: int = -1
+    iNetProfitColumnIndexStep0010: int = -1
+    iPreTaxProfitColumnIndexStep0010: int = -1
+    if objStep0010Rows:
+        objHeaderRow = objStep0010Rows[0]
+        for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+            if pszColumnName == "法人税、住民税及び事業税":
+                iCorporateTaxColumnIndexStep0010 = iColumnIndex
+            elif pszColumnName == "法人税等":
+                iCorporateTaxTotalColumnIndexStep0010 = iColumnIndex
+            elif pszColumnName == "税引前当期純利益":
+                iPreTaxProfitColumnIndexStep0010 = iColumnIndex
+            elif pszColumnName == "当期純利益":
+                iNetProfitColumnIndexStep0010 = iColumnIndex
+
+    if (
+        iCorporateTaxColumnIndexStep0010 >= 0
+        and iCorporateTaxTotalColumnIndexStep0010 >= 0
+        and iPreTaxProfitColumnIndexStep0010 >= 0
+        and iNetProfitColumnIndexStep0010 >= 0
+    ):
+        recalculate_net_profit(
+            objStep0010Rows,
+            iCorporateTaxColumnIndexStep0010,
+            iCorporateTaxTotalColumnIndexStep0010,
+            iPreTaxProfitColumnIndexStep0010,
+            iNetProfitColumnIndexStep0010,
+        )
+
+    with open(pszOutputStep0010Path, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objStep0010Rows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+    write_transposed_tsv(pszOutputStep0010Path)
+    pszOutputStep0010HorizontalPath: str = pszOutputStep0010Path.replace("_vertical", "")
+    move_files_to_temp_and_copy_back(
+        [pszOutputStep0010Path, pszOutputStep0010HorizontalPath],
+        os.getcwd(),
+    )
+
+    with open(pszOutputFinalPath, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objRows:
+            objOutputFile.write("\t".join(objRow) + "\n")
+    write_transposed_tsv(pszOutputFinalPath)
+
+
+def transpose_rows(objRows: List[List[str]]) -> List[List[str]]:
+    if not objRows:
+        return []
+    iMaxColumns: int = max(len(objRow) for objRow in objRows)
+    objNormalized: List[List[str]] = []
+    for objRow in objRows:
+        objNormalized.append(objRow + [""] * (iMaxColumns - len(objRow)))
+
+    objTransposed: List[List[str]] = []
+    for iColumnIndex in range(iMaxColumns):
+        objTransposed.append([objRow[iColumnIndex] for objRow in objNormalized])
+    return objTransposed
+
+
+def write_transposed_tsv(pszInputPath: str) -> None:
+    pszDirectory: str
+    pszFileName: str
+    pszDirectory, pszFileName = os.path.split(pszInputPath)
+    pszOutputFileName: str = pszFileName.replace("_vertical", "")
+    pszOutputPath: str = os.path.join(pszDirectory, pszOutputFileName)
+
+    objRows: List[List[str]] = []
+    with open(pszInputPath, "r", encoding="utf-8", newline="") as objInputFile:
+        for pszLine in objInputFile:
+            pszLineText: str = pszLine.rstrip("\n").rstrip("\r")
+            objRows.append(pszLineText.split("\t"))
+
+    objTransposed = transpose_rows(objRows)
+    with open(pszOutputPath, "w", encoding="utf-8", newline="") as objOutputFile:
+        for objRow in objTransposed:
+            objOutputFile.write("\t".join(objRow) + "\n")
+
+
+def move_files_to_temp_and_copy_back(objFilePaths: List[str], pszBaseDirectory: str) -> None:
+    if not objFilePaths:
+        return
+
+    pszTempDirectory: str = os.path.join(pszBaseDirectory, "temp")
+    os.makedirs(pszTempDirectory, exist_ok=True)
+
+    for pszFilePath in objFilePaths:
+        if not os.path.isfile(pszFilePath):
+            continue
+        pszFileName: str = os.path.basename(pszFilePath)
+        pszTempPath: str = os.path.join(pszTempDirectory, pszFileName)
+        shutil.move(pszFilePath, pszTempPath)
+        shutil.copy2(pszTempPath, os.path.join(pszBaseDirectory, pszFileName))
+
+
+def move_files_to_temp(objFilePaths: List[str], pszBaseDirectory: str) -> None:
+    if not objFilePaths:
+        return
+
+    pszTempDirectory: str = os.path.join(pszBaseDirectory, "temp")
+    os.makedirs(pszTempDirectory, exist_ok=True)
+
+    for pszFilePath in objFilePaths:
+        if not os.path.isfile(pszFilePath):
+            continue
+        pszFileName: str = os.path.basename(pszFilePath)
+        pszTempPath: str = os.path.join(pszTempDirectory, pszFileName)
+        shutil.move(pszFilePath, pszTempPath)
+
+
+def find_selected_range_path(pszBaseDirectory: str) -> Optional[str]:
+    pszFileName: str = "SellGeneralAdminCost_Allocation_DnD_SelectedRange.txt"
+    objCandidates: List[str] = [
+        os.path.join(pszBaseDirectory, pszFileName),
+        os.path.join(os.path.dirname(__file__), pszFileName),
+    ]
+    for pszCandidate in objCandidates:
+        if os.path.isfile(pszCandidate):
+            return pszCandidate
+    return None
+
+
+def parse_selected_range(pszRangePath: str) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    try:
+        with open(pszRangePath, "r", encoding="utf-8", newline="") as objFile:
+            pszContent: str = objFile.read()
+    except OSError:
+        return None
+
+    objMatch = re.search(r"開始:\s*(\d{4})/(\d{2}).*?終了:\s*(\d{4})/(\d{2})", pszContent, re.DOTALL)
+    if objMatch is None:
+        objMatch = re.search(r"採用範囲:\s*(\d{4})年(\d{1,2})月〜(\d{4})年(\d{1,2})月", pszContent)
+        if objMatch is None:
+            return None
+        iStartYear: int = int(objMatch.group(1))
+        iStartMonth: int = int(objMatch.group(2))
+        iEndYear: int = int(objMatch.group(3))
+        iEndMonth: int = int(objMatch.group(4))
+    else:
+        iStartYear = int(objMatch.group(1))
+        iStartMonth = int(objMatch.group(2))
+        iEndYear = int(objMatch.group(3))
+        iEndMonth = int(objMatch.group(4))
+
+    if not (1 <= iStartMonth <= 12 and 1 <= iEndMonth <= 12):
+        return None
+    return (iStartYear, iStartMonth), (iEndYear, iEndMonth)
+
+
+def extract_year_month_from_path(pszPath: str) -> Optional[Tuple[int, int]]:
+    pszBaseName: str = os.path.basename(pszPath)
+    objMatch = re.search(r"_(\d{4})年(\d{1,2})月", pszBaseName)
+    if objMatch is None:
+        return None
+    try:
+        iYear: int = int(objMatch.group(1))
+        iMonth: int = int(objMatch.group(2))
+    except ValueError:
+        return None
+    if iMonth < 1 or iMonth > 12:
+        return None
+    return iYear, iMonth
+
+
+def find_best_continuous_range(objYearMonths: List[Tuple[int, int]]) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    if not objYearMonths:
+        return None
+
+    objSorted: List[Tuple[int, int]] = sorted(set(objYearMonths))
+    objBestRange: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
+    iBestLength: int = 0
+    objCurrentStart: Tuple[int, int] = objSorted[0]
+    objCurrentEnd: Tuple[int, int] = objSorted[0]
+
+    for objMonth in objSorted[1:]:
+        if next_year_month(*objCurrentEnd) == objMonth:
+            objCurrentEnd = objMonth
+            continue
+
+        iCurrentLength: int = _range_length(objCurrentStart, objCurrentEnd)
+        objBestRange, iBestLength = _update_best_range(objBestRange, iBestLength, objCurrentStart, objCurrentEnd)
+        objCurrentStart = objMonth
+        objCurrentEnd = objMonth
+
+    objBestRange, _ = _update_best_range(objBestRange, iBestLength, objCurrentStart, objCurrentEnd)
+    return objBestRange
+
+
+def _range_length(objStart: Tuple[int, int], objEnd: Tuple[int, int]) -> int:
+    iYearStart, iMonthStart = objStart
+    iYearEnd, iMonthEnd = objEnd
+    return (iYearEnd * 12 + iMonthEnd) - (iYearStart * 12 + iMonthStart) + 1
+
+
+def _update_best_range(
+    objCurrentBest: Optional[Tuple[Tuple[int, int], Tuple[int, int]]],
+    iCurrentBestLength: int,
+    objCandidateStart: Tuple[int, int],
+    objCandidateEnd: Tuple[int, int],
+) -> Tuple[Optional[Tuple[Tuple[int, int], Tuple[int, int]]], int]:
+    iCandidateLength: int = _range_length(objCandidateStart, objCandidateEnd)
+    if iCandidateLength > iCurrentBestLength:
+        return (objCandidateStart, objCandidateEnd), iCandidateLength
+    if iCandidateLength == iCurrentBestLength and objCurrentBest is not None:
+        if objCandidateEnd > objCurrentBest[1]:
+            return (objCandidateStart, objCandidateEnd), iCandidateLength
+    if objCurrentBest is None:
+        return (objCandidateStart, objCandidateEnd), iCandidateLength
+    return objCurrentBest, iCurrentBestLength
+
+
+def ensure_selected_range_file(pszDirectory: str, objRange: Tuple[Tuple[int, int], Tuple[int, int]]) -> str:
+    iStartYear, iStartMonth = objRange[0]
+    iEndYear, iEndMonth = objRange[1]
+    pszOutputPath: str = os.path.join(pszDirectory, "SellGeneralAdminCost_Allocation_DnD_SelectedRange.txt")
+    pszStartText: str = f"{iStartYear:04d}/{iStartMonth:02d}"
+    pszEndText: str = f"{iEndYear:04d}/{iEndMonth:02d}"
+    objLines: List[str] = [
+        "採用範囲:",
+        f"開始: {pszStartText}",
+        f"終了: {pszEndText}",
+    ]
+    with open(pszOutputPath, "w", encoding="utf-8", newline="") as objFile:
+        objFile.write("\n".join(objLines) + "\n")
+    return pszOutputPath
+
+
+def record_created_file(_pszPath: str) -> None:
+    return
+
+
+def month_to_ordinal(objMonth: Tuple[int, int]) -> int:
+    iYear, iMonth = objMonth
+    return iYear * 12 + iMonth
+
+
+def is_month_in_range(objMonth: Tuple[int, int], objRange: Tuple[Tuple[int, int], Tuple[int, int]]) -> bool:
+    iValue: int = month_to_ordinal(objMonth)
+    iStart: int = month_to_ordinal(objRange[0])
+    iEnd: int = month_to_ordinal(objRange[1])
+    return iStart <= iValue <= iEnd
+
+
+def next_year_month(iYear: int, iMonth: int) -> Tuple[int, int]:
+    iMonth += 1
+    if iMonth > 12:
+        iMonth = 1
+        iYear += 1
+    return iYear, iMonth
+
+
+def build_month_sequence(
+    objStart: Tuple[int, int],
+    objEnd: Tuple[int, int],
+) -> List[Tuple[int, int]]:
+    objMonths: List[Tuple[int, int]] = []
+    iYear, iMonth = objStart
+    while True:
+        objMonths.append((iYear, iMonth))
+        if (iYear, iMonth) == objEnd:
+            break
+        iYear, iMonth = next_year_month(iYear, iMonth)
+    return objMonths
+
+
+def split_by_fiscal_boundary(
+    objStart: Tuple[int, int],
+    objEnd: Tuple[int, int],
+    iBoundaryEndMonth: int,
+) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    objMonths = build_month_sequence(objStart, objEnd)
+    if not objMonths:
+        return []
+
+    objRanges: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
+    objRangeStart: Tuple[int, int] = objMonths[0]
+    for iIndex, objMonth in enumerate(objMonths):
+        iYear, iMonth = objMonth
+        is_last: bool = iIndex == len(objMonths) - 1
+        if iMonth == iBoundaryEndMonth and not is_last:
+            objRanges.append((objRangeStart, objMonth))
+            objRangeStart = objMonths[iIndex + 1]
+    objRanges.append((objRangeStart, objMonths[-1]))
+    return objRanges
+
+
+def try_parse_float(pszText: str) -> Optional[float]:
+    pszValue: str = (pszText or "").strip()
+    if pszValue == "":
+        return None
+    try:
+        return float(pszValue)
+    except ValueError:
+        return None
+
+
+def read_tsv_rows(pszPath: str) -> List[List[str]]:
+    objRows: List[List[str]] = []
+    with open(pszPath, "r", encoding="utf-8", newline="") as objFile:
+        for pszLine in objFile:
+            pszLineText: str = pszLine.rstrip("\n").rstrip("\r")
+            objRows.append(pszLineText.split("\t") if pszLineText != "" else [""])
+    return objRows
+
+
+def sum_tsv_rows(objBaseRows: List[List[str]], objAddRows: List[List[str]]) -> List[List[str]]:
+    if not objBaseRows:
+        return [list(objRow) for objRow in objAddRows]
+    if not objAddRows:
+        return objBaseRows
+
+    objBaseKeyIndices: Dict[str, List[int]] = {}
+    for iRowIndex, objRow in enumerate(objBaseRows):
+        pszKey: str = objRow[0] if objRow else ""
+        objBaseKeyIndices.setdefault(pszKey, []).append(iRowIndex)
+
+    objBaseKeyCursor: Dict[str, int] = {pszKey: 0 for pszKey in objBaseKeyIndices}
+
+    for iRowIndex, objAddRow in enumerate(objAddRows):
+        if iRowIndex == 0:
+            objBaseHeader: List[str] = objBaseRows[0]
+            iColumnCount: int = max(len(objBaseHeader), len(objAddRow))
+            if len(objBaseHeader) < iColumnCount:
+                objBaseHeader.extend([""] * (iColumnCount - len(objBaseHeader)))
+            if len(objAddRow) < iColumnCount:
+                objAddRow = objAddRow + [""] * (iColumnCount - len(objAddRow))
+            for iColumnIndex in range(iColumnCount):
+                if objBaseHeader[iColumnIndex].strip() == "" and objAddRow[iColumnIndex].strip() != "":
+                    objBaseHeader[iColumnIndex] = objAddRow[iColumnIndex]
+            objBaseRows[0] = objBaseHeader
+            continue
+
+        pszKey = objAddRow[0] if objAddRow else ""
+        objIndices: List[int] = objBaseKeyIndices.get(pszKey, [])
+        iCursor: int = objBaseKeyCursor.get(pszKey, 0)
+        if iCursor < len(objIndices):
+            iTargetIndex = objIndices[iCursor]
+            objBaseKeyCursor[pszKey] = iCursor + 1
+        else:
+            iTargetIndex = len(objBaseRows)
+            objBaseRows.append(list(objAddRow))
+            objBaseKeyIndices.setdefault(pszKey, []).append(iTargetIndex)
+            objBaseKeyCursor[pszKey] = objBaseKeyCursor.get(pszKey, 0) + 1
+            continue
+
+        objBaseRow = objBaseRows[iTargetIndex]
+        iColumnCount = max(len(objBaseRow), len(objAddRow))
+        if len(objBaseRow) < iColumnCount:
+            objBaseRow.extend([""] * (iColumnCount - len(objBaseRow)))
+        if len(objAddRow) < iColumnCount:
+            objAddRow = objAddRow + [""] * (iColumnCount - len(objAddRow))
+
+        for iColumnIndex in range(1, iColumnCount):
+            pszBaseValue = objBaseRow[iColumnIndex]
+            pszAddValue = objAddRow[iColumnIndex]
+            fBase = try_parse_float(pszBaseValue)
+            fAdd = try_parse_float(pszAddValue)
+
+            if fBase is not None and fAdd is not None:
+                objBaseRow[iColumnIndex] = format_number(fBase + fAdd)
+            elif fBase is None and pszBaseValue.strip() == "" and fAdd is not None:
+                objBaseRow[iColumnIndex] = format_number(fAdd)
+            elif fBase is None and pszBaseValue.strip() == "" and pszAddValue.strip() != "":
+                objBaseRow[iColumnIndex] = pszAddValue
+
+        objBaseRows[iTargetIndex] = objBaseRow
+
+    return objBaseRows
+
+
+def write_tsv_rows(pszPath: str, objRows: List[List[str]]) -> None:
+    with open(pszPath, "w", encoding="utf-8", newline="") as objFile:
+        for objRow in objRows:
+            objFile.write("\t".join(objRow) + "\n")
+
+
+def format_sales_ratio(fValue: float) -> str:
+    objDecimal = Decimal(str(fValue))
+    objRounded = objDecimal.quantize(Decimal("0.000"), rounding=ROUND_HALF_UP)
+    return f"{objRounded:.3f}"
+
+
+def add_sales_ratio_column(objRows: List[List[str]]) -> List[List[str]]:
+    if not objRows:
+        return []
+
+    iSalesRowIndex: int = find_row_index_by_name(objRows, "純売上高")
+    fSales: float = 0.0
+    if iSalesRowIndex >= 0 and len(objRows[iSalesRowIndex]) >= 2:
+        fSales = parse_number(objRows[iSalesRowIndex][1])
+
+    iLastRatioRowIndex: int = find_row_index_by_name(objRows, "当期製品製造原価")
+    if iLastRatioRowIndex < 0:
+        iLastRatioRowIndex = len(objRows) - 1
+
+    objOutputRows: List[List[str]] = []
+    for iRowIndex, objRow in enumerate(objRows):
+        pszName: str = objRow[0] if objRow else ""
+        pszValue: str = objRow[1] if len(objRow) >= 2 else ""
+        if iRowIndex == 0:
+            objOutputRows.append([pszName, pszValue, "売上比率"])
+            continue
+
+        if iRowIndex > iLastRatioRowIndex:
+            objOutputRows.append([pszName, pszValue, ""])
+            continue
+
+        fValue: float = parse_number(pszValue)
+        if abs(fSales) > 0.0000001:
+            fRatio: float = fValue / fSales
+            objOutputRows.append([pszName, pszValue, format_sales_ratio(fRatio)])
+            continue
+
+        if fValue > 0.0:
+            pszRatio = "'＋∞"
+        elif fValue < 0.0:
+            pszRatio = "'－∞"
+        else:
+            pszRatio = format_sales_ratio(0.0)
+        objOutputRows.append([pszName, pszValue, pszRatio])
+
+    return objOutputRows
+
+
+def build_step0010_rows(
+    objSingleRows: List[List[str]],
+    objCumulativeRows: List[List[str]],
+) -> List[List[str]]:
+    if not objSingleRows and not objCumulativeRows:
+        return []
+
+    iSingleColumnCount: int = max((len(objRow) for objRow in objSingleRows), default=0)
+    iCumulativeColumnCount: int = max((len(objRow) for objRow in objCumulativeRows), default=0)
+    iMaxRows: int = max(len(objSingleRows), len(objCumulativeRows))
+    objOutputRows: List[List[str]] = []
+
+    for iRowIndex in range(iMaxRows):
+        objSingleRow: List[str] = (
+            list(objSingleRows[iRowIndex]) if iRowIndex < len(objSingleRows) else []
+        )
+        objCumulativeRow: List[str] = (
+            list(objCumulativeRows[iRowIndex]) if iRowIndex < len(objCumulativeRows) else []
+        )
+        if len(objSingleRow) < iSingleColumnCount:
+            objSingleRow.extend([""] * (iSingleColumnCount - len(objSingleRow)))
+        if len(objCumulativeRow) < iCumulativeColumnCount:
+            objCumulativeRow.extend([""] * (iCumulativeColumnCount - len(objCumulativeRow)))
+        objOutputRows.append(objSingleRow + [""] + objCumulativeRow)
+
+    return objOutputRows
+
+
+def append_gross_margin_column(objRows: List[List[str]]) -> List[List[str]]:
+    if not objRows:
+        return []
+    objHeader: List[str] = objRows[0]
+    iSalesIndex: int = find_column_index(objHeader, "純売上高")
+    iGrossProfitIndex: int = find_column_index(objHeader, "売上総利益")
+    objOutputRows: List[List[str]] = []
+
+    for iRowIndex, objRow in enumerate(objRows):
+        objNewRow: List[str] = list(objRow)
+        if iRowIndex == 0:
+            objNewRow.append("粗利益率")
+            objOutputRows.append(objNewRow)
+            continue
+
+        fSales: float = 0.0
+        fGrossProfit: float = 0.0
+        if 0 <= iSalesIndex < len(objRow):
+            fSales = parse_number(objRow[iSalesIndex])
+        if 0 <= iGrossProfitIndex < len(objRow):
+            fGrossProfit = parse_number(objRow[iGrossProfitIndex])
+
+        if abs(fSales) < 0.0000001:
+            if fGrossProfit > 0:
+                objNewRow.append("'＋∞")
+            elif fGrossProfit < 0:
+                objNewRow.append("'－∞")
+            else:
+                objNewRow.append("0")
+        else:
+            objNewRow.append(format_number(fGrossProfit / fSales))
+
+        objOutputRows.append(objNewRow)
+    return objOutputRows
+
+
+def build_report_file_path(
+    pszDirectory: str,
+    pszPrefix: str,
+    objYearMonth: Tuple[int, int],
+) -> str:
+    iYear, iMonth = objYearMonth
+    pszMonth: str = f"{iMonth:02d}"
+    pszFileName: str = f"{pszPrefix}_{iYear}年{pszMonth}月_A∪B_プロジェクト名_C∪D.tsv"
+    return os.path.join(pszDirectory, pszFileName)
+
+
+def build_report_vertical_file_path(
+    pszDirectory: str,
+    pszPrefix: str,
+    objYearMonth: Tuple[int, int],
+) -> str:
+    iYear, iMonth = objYearMonth
+    pszMonth: str = f"{iMonth:02d}"
+    pszFileName: str = f"{pszPrefix}_{iYear}年{pszMonth}月_A∪B_プロジェクト名_C∪D_vertical.tsv"
+    return os.path.join(pszDirectory, pszFileName)
+
+
+def build_cumulative_file_path(
+    pszDirectory: str,
+    pszPrefix: str,
+    objStart: Tuple[int, int],
+    objEnd: Tuple[int, int],
+) -> str:
+    iStartYear, iStartMonth = objStart
+    iEndYear, iEndMonth = objEnd
+    pszStartMonth: str = f"{iStartMonth:02d}"
+    pszEndMonth: str = f"{iEndMonth:02d}"
+    pszFileName: str = (
+        f"累計_{pszPrefix}_{iStartYear}年{pszStartMonth}月_{iEndYear}年{pszEndMonth}月.tsv"
+    )
+    return os.path.join(pszDirectory, pszFileName)
+
+
+def read_report_rows(
+    pszDirectory: str,
+    pszPrefix: str,
+    objYearMonth: Tuple[int, int],
+) -> Optional[List[List[str]]]:
+    pszHorizontalPath: str = build_report_file_path(pszDirectory, pszPrefix, objYearMonth)
+    if os.path.isfile(pszHorizontalPath):
+        return read_tsv_rows(pszHorizontalPath)
+
+    pszVerticalPath: str = build_report_vertical_file_path(pszDirectory, pszPrefix, objYearMonth)
+    if os.path.isfile(pszVerticalPath):
+        objVerticalRows: List[List[str]] = read_tsv_rows(pszVerticalPath)
+        return transpose_rows(objVerticalRows)
+
+    print(f"Input file not found: {pszHorizontalPath}")
+    print(f"Input file not found: {pszVerticalPath}")
+    return None
+
+
+def find_column_index(objHeader: List[str], pszName: str) -> int:
+    for iIndex, pszValue in enumerate(objHeader):
+        if pszValue == pszName:
+            return iIndex
+    return -1
+
+
+def is_company_project(pszProjectName: str) -> bool:
+    return re.match(r"^C\d{3}_", pszProjectName) is not None
+
+
+def is_summary_project(pszProjectName: str) -> bool:
+    return pszProjectName.startswith("合計")
+
+
+def is_project_code(pszProjectName: str, pszPrefix: str, iDigits: int) -> bool:
+    return re.match(rf"^{pszPrefix}\d{{{iDigits}}}_", pszProjectName) is not None
+
+
+def collect_project_rows(
+    objRows: List[List[str]],
+    iProjectNameColumnIndex: int,
+) -> List[List[str]]:
+    if not objRows:
+        return []
+    iStartIndex: int = 1
+    for iIndex, objRow in enumerate(objRows[1:], start=1):
+        pszName: str = ""
+        if 0 <= iProjectNameColumnIndex < len(objRow):
+            pszName = objRow[iProjectNameColumnIndex]
+        if pszName.startswith("本部"):
+            iStartIndex = iIndex
+            break
+    return objRows[iStartIndex:]
+
+
+def build_project_rows_for_summary(
+    objRows: List[List[str]],
+    iProjectNameColumnIndex: int,
+) -> List[List[str]]:
+    objCandidateRows: List[List[str]] = collect_project_rows(objRows, iProjectNameColumnIndex)
+    objOrderedRows: List[List[str]] = []
+    objRules: List[Tuple[str, int]] = [("J", 3), ("P", 5)]
+    for pszPrefix, iDigits in objRules:
+        for objRow in objCandidateRows:
+            pszName: str = ""
+            if 0 <= iProjectNameColumnIndex < len(objRow):
+                pszName = objRow[iProjectNameColumnIndex]
+            if pszName == "" or is_company_project(pszName) or is_summary_project(pszName):
+                continue
+            if is_project_code(pszName, pszPrefix, iDigits):
+                objOrderedRows.append(objRow)
+    return objOrderedRows
+
+
+def extract_project_values(
+    objRows: List[List[str]],
+    iProjectNameColumnIndex: int,
+    iValueColumnIndex: int,
+) -> List[str]:
+    objValues: List[str] = []
+    for objRow in build_project_rows_for_summary(objRows, iProjectNameColumnIndex):
+        if iValueColumnIndex < 0 or iValueColumnIndex >= len(objRow):
+            objValues.append("")
+        else:
+            objValues.append(objRow[iValueColumnIndex])
+    return objValues
+
+
+def extract_project_names(
+    objRows: List[List[str]],
+    iProjectNameColumnIndex: int,
+) -> List[str]:
+    objNames: List[str] = []
+    for objRow in build_project_rows_for_summary(objRows, iProjectNameColumnIndex):
+        pszName: str = ""
+        if 0 <= iProjectNameColumnIndex < len(objRow):
+            pszName = objRow[iProjectNameColumnIndex]
+        objNames.append(pszName)
+    return objNames
+
+
+def build_gross_margin_values(
+    objRows: List[List[str]],
+    iProjectNameColumnIndex: int,
+    iGrossProfitColumnIndex: int,
+    iSalesColumnIndex: int,
+) -> List[str]:
+    objValues: List[str] = []
+    for objRow in build_project_rows_for_summary(objRows, iProjectNameColumnIndex):
+        fGrossProfit: float = 0.0
+        fSales: float = 0.0
+        if 0 <= iGrossProfitColumnIndex < len(objRow):
+            fGrossProfit = parse_number(objRow[iGrossProfitColumnIndex])
+        if 0 <= iSalesColumnIndex < len(objRow):
+            fSales = parse_number(objRow[iSalesColumnIndex])
+        if abs(fSales) < 0.0000001:
+            if fGrossProfit > 0:
+                objValues.append("'＋∞")
+            elif fGrossProfit < 0:
+                objValues.append("'－∞")
+            else:
+                objValues.append("0")
+        else:
+            objValues.append(format_number(fGrossProfit / fSales))
+    return objValues
+
+
+def write_pj_summary(
+    pszOutputPath: str,
+    objSingleRows: List[List[str]],
+    objCumulativeRows: List[List[str]],
+) -> None:
+    if not objSingleRows or not objCumulativeRows:
+        return
+    objSingleHeader: List[str] = objSingleRows[0]
+    objCumulativeHeader: List[str] = objCumulativeRows[0]
+
+    iProjectNameColumnIndex: int = 0
+    iSingleSalesIndex: int = 2
+    iCumulativeSalesIndex: int = 2
+    iSingleCostIndex: int = find_column_index(objSingleHeader, "売上原価")
+    iCumulativeCostIndex: int = find_column_index(objCumulativeHeader, "売上原価")
+    iSingleGrossIndex: int = find_column_index(objSingleHeader, "売上総利益")
+    iCumulativeGrossIndex: int = find_column_index(objCumulativeHeader, "売上総利益")
+    iSingleAllocationIndex: int = find_column_index(objSingleHeader, "配賦販管費")
+    iCumulativeAllocationIndex: int = find_column_index(objCumulativeHeader, "配賦販管費")
+
+    objProjectNames: List[str] = extract_project_names(objSingleRows, iProjectNameColumnIndex)
+    objSingleSales: List[str] = extract_project_values(
+        objSingleRows,
+        iProjectNameColumnIndex,
+        iSingleSalesIndex,
+    )
+    objCumulativeSales: List[str] = extract_project_values(
+        objCumulativeRows,
+        iProjectNameColumnIndex,
+        iCumulativeSalesIndex,
+    )
+    objSingleCost: List[str] = extract_project_values(
+        objSingleRows,
+        iProjectNameColumnIndex,
+        iSingleCostIndex,
+    )
+    objCumulativeCost: List[str] = extract_project_values(
+        objCumulativeRows,
+        iProjectNameColumnIndex,
+        iCumulativeCostIndex,
+    )
+    objSingleGross: List[str] = extract_project_values(
+        objSingleRows,
+        iProjectNameColumnIndex,
+        iSingleGrossIndex,
+    )
+    objCumulativeGross: List[str] = extract_project_values(
+        objCumulativeRows,
+        iProjectNameColumnIndex,
+        iCumulativeGrossIndex,
+    )
+    objSingleAllocation: List[str] = extract_project_values(
+        objSingleRows,
+        iProjectNameColumnIndex,
+        iSingleAllocationIndex,
+    )
+    objCumulativeAllocation: List[str] = extract_project_values(
+        objCumulativeRows,
+        iProjectNameColumnIndex,
+        iCumulativeAllocationIndex,
+    )
+    objSingleMargin: List[str] = build_gross_margin_values(
+        objSingleRows,
+        iProjectNameColumnIndex,
+        iSingleGrossIndex,
+        iSingleSalesIndex,
+    )
+    objCumulativeMargin: List[str] = build_gross_margin_values(
+        objCumulativeRows,
+        iProjectNameColumnIndex,
+        iCumulativeGrossIndex,
+        iCumulativeSalesIndex,
+    )
+
+    objRows: List[List[str]] = []
+    objRows.append(
+        [
+            "1",
+            "PJ名称",
+            "単月_純売上高",
+            "累計_純売上高",
+            "単月_売上原価",
+            "累計_売上原価",
+            "単月_売上総利益",
+            "累計_売上総利益",
+            "単月_カンパニー販管費",
+            "累計_カンパニー販管費",
+            "単月_配賦販管費",
+            "累計_配賦販管費",
+            "粗利益率",
+            "粗利益率",
+        ]
+    )
+
+    for iIndex, pszProjectName in enumerate(objProjectNames):
+        objRows.append(
+            [
+                str(iIndex + 2),
+                pszProjectName,
+                objSingleSales[iIndex] if iIndex < len(objSingleSales) else "",
+                objCumulativeSales[iIndex] if iIndex < len(objCumulativeSales) else "",
+                objSingleCost[iIndex] if iIndex < len(objSingleCost) else "",
+                objCumulativeCost[iIndex] if iIndex < len(objCumulativeCost) else "",
+                objSingleGross[iIndex] if iIndex < len(objSingleGross) else "",
+                objCumulativeGross[iIndex] if iIndex < len(objCumulativeGross) else "",
+                "0",
+                "0",
+                objSingleAllocation[iIndex] if iIndex < len(objSingleAllocation) else "",
+                objCumulativeAllocation[iIndex] if iIndex < len(objCumulativeAllocation) else "",
+                objSingleMargin[iIndex] if iIndex < len(objSingleMargin) else "",
+                objCumulativeMargin[iIndex] if iIndex < len(objCumulativeMargin) else "",
+            ]
+        )
+
+    write_tsv_rows(pszOutputPath, objRows)
+
+
+def filter_rows_by_columns(
+    objRows: List[List[str]],
+    objTargetColumns: List[str],
+) -> List[List[str]]:
+    if not objRows:
+        return []
+    objHeader: List[str] = objRows[0]
+    objColumnIndices: List[int] = [
+        find_column_index(objHeader, pszColumn)
+        for pszColumn in objTargetColumns
+    ]
+    objFilteredRows: List[List[str]] = []
+    for objRow in objRows:
+        objFilteredRow: List[str] = []
+        for iColumnIndex in objColumnIndices:
+            if 0 <= iColumnIndex < len(objRow):
+                objFilteredRow.append(objRow[iColumnIndex])
+            else:
+                objFilteredRow.append("")
+        objFilteredRows.append(objFilteredRow)
+    return objFilteredRows
+
+
+def combine_company_sg_admin_columns(
+    objRows: List[List[str]],
+) -> List[List[str]]:
+    if not objRows:
+        return []
+    objHeader: List[str] = objRows[0]
+    objCompanyColumns: List[str] = [
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+    ]
+    objCompanyIndices: List[int] = [
+        find_column_index(objHeader, pszColumn) for pszColumn in objCompanyColumns
+    ]
+    objCompanyIndexSet = {iIndex for iIndex in objCompanyIndices if iIndex >= 0}
+    iAllocationIndex: int = find_column_index(objHeader, "配賦販管費")
+    objOutputRows: List[List[str]] = []
+    for iRowIndex, objRow in enumerate(objRows):
+        if iRowIndex == 0:
+            objOutputRow: List[str] = []
+            bInserted: bool = False
+            for iColumnIndex, pszValue in enumerate(objHeader):
+                if iColumnIndex == iAllocationIndex:
+                    objOutputRow.append("カンパニー販管費")
+                    bInserted = True
+                if iColumnIndex in objCompanyIndexSet:
+                    continue
+                objOutputRow.append(pszValue)
+            if not bInserted:
+                objOutputRow.append("カンパニー販管費")
+            objOutputRows.append(objOutputRow)
+            continue
+
+        fCompanyTotal: float = 0.0
+        for iColumnIndex in objCompanyIndices:
+            if 0 <= iColumnIndex < len(objRow):
+                fCompanyTotal += parse_number(objRow[iColumnIndex])
+        pszCompanyTotal: str = format_number(fCompanyTotal)
+
+        objOutputRow = []
+        bInserted = False
+        for iColumnIndex, pszValue in enumerate(objRow):
+            if iColumnIndex == iAllocationIndex:
+                objOutputRow.append(pszCompanyTotal)
+                bInserted = True
+            if iColumnIndex in objCompanyIndexSet:
+                continue
+            objOutputRow.append(pszValue)
+        if not bInserted:
+            objOutputRow.append(pszCompanyTotal)
+        objOutputRows.append(objOutputRow)
+
     return objOutputRows
 
 
 def load_org_table_company_map(pszOrgTablePath: str) -> Dict[str, str]:
     objCompanyMap: Dict[str, str] = {}
+    if not os.path.isfile(pszOrgTablePath):
+        return objCompanyMap
+
     objRows = read_tsv_rows(pszOrgTablePath)
     if not objRows:
         return objCompanyMap
 
     objHeader = objRows[0]
-    iCodeIndex = -1
+    iCodeIndex = find_column_index(objHeader, "PJコード")
+    objCompanyColumnCandidates = ["計上カンパニー名", "計上カンパニー"]
     iCompanyIndex = -1
-    for iIndex, pszValue in enumerate(objHeader):
-        if pszValue in ["PJコード", "PJコード_"]:
-            iCodeIndex = iIndex
-        if pszValue in ["会社名", "会社名_"]:
-            iCompanyIndex = iIndex
+    for pszColumn in objCompanyColumnCandidates:
+        iCompanyIndex = find_column_index(objHeader, pszColumn)
+        if iCompanyIndex >= 0:
+            break
 
     iStartIndex = 0
     if iCodeIndex >= 0:
@@ -156,6 +1854,7 @@ def load_org_table_company_map(pszOrgTablePath: str) -> Dict[str, str]:
         pszCompanyName: str = objRow[iCompanyIndex].strip()
         if not pszProjectCode:
             continue
+
         objMatch = re.match(r"^(P\d{5}_|[A-OQ-Z]\d{3}_)", pszProjectCode)
         if objMatch is None:
             objMatch = re.match(r"^(P\d{5}|[A-OQ-Z]\d{3})", pszProjectCode)
@@ -228,7 +1927,7 @@ def build_step0004_rows_for_summary(objRows: List[List[str]]) -> List[List[str]]
     ]
     objTargetSet = set(objTargetNames)
     objHeaderRow: List[str] = objRows[0]
-    objTotalRow: List[str] | None = None
+    objTotalRow: Optional[List[str]] = None
     for objRow in objRows:
         if not objRow:
             continue
@@ -302,4474 +2001,1529 @@ def build_step0006_rows_for_summary(objRows: List[List[str]]) -> List[List[str]]
     return [objLabelRow] + [list(objRow) for objRow in objRows]
 
 
-def generate_pj_summary_0005_files(objBaseDirectoryPath: Path, iYear: int, iMonth: int) -> None:
-    pszMonth: str = f"{iMonth:02d}"
-    pszSingleStep0001Path: Path = objBaseDirectoryPath / (
-        f"0004_PJサマリ_step0001_単月_損益計算書_{iYear}年{pszMonth}月.tsv"
+def filter_rows_by_names(
+    objRows: List[List[str]],
+    objTargetNames: List[str],
+) -> List[List[str]]:
+    if not objRows:
+        return []
+    objTargetSet = set(objTargetNames)
+    objFilteredRows: List[List[str]] = []
+    for objRow in objRows:
+        if not objRow:
+            continue
+        pszName: str = objRow[0].strip()
+        if pszName in objTargetSet:
+            objFilteredRows.append(objRow)
+    return objFilteredRows
+
+
+def add_company_sg_admin_cost_total_row(objRows: List[List[str]]) -> List[List[str]]:
+    # step0003向けにカンパニー販管費の合計行を追加する
+    if not objRows:
+        return objRows
+
+    objTargetNames: List[str] = [
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+    ]
+    objTargetSet = set(objTargetNames)
+
+    for objRow in objRows:
+        if objRow and objRow[0].strip() == "カンパニー販管費":
+            return objRows
+
+    iMaxColumns: int = max(len(objRow) for objRow in objRows)
+    objTotals: List[float] = [0.0] * iMaxColumns
+
+    for objRow in objRows:
+        if not objRow:
+            continue
+        if objRow[0].strip() not in objTargetSet:
+            continue
+        for iColumnIndex in range(1, iMaxColumns):
+            if iColumnIndex < len(objRow):
+                objTotals[iColumnIndex] += parse_number(objRow[iColumnIndex])
+
+    objNewRow: List[str] = [""] * iMaxColumns
+    objNewRow[0] = "カンパニー販管費"
+    for iColumnIndex in range(1, iMaxColumns):
+        objNewRow[iColumnIndex] = format_number(objTotals[iColumnIndex])
+
+    objOutputRows: List[List[str]] = []
+    for objRow in objRows:
+        if objRow and objRow[0].strip() in objTargetSet:
+            continue
+        objOutputRows.append(list(objRow))
+    objOutputRows.append(objNewRow)
+    return objOutputRows
+
+
+def move_row_between(
+    objRows: List[List[str]],
+    pszMoveName: str,
+    pszBeforeName: str,
+    pszAfterName: str,
+) -> List[List[str]]:
+    if not objRows:
+        return objRows
+
+    iMoveIndex: int = -1
+    iBeforeIndex: int = -1
+    iAfterIndex: int = -1
+    for iRowIndex, objRow in enumerate(objRows):
+        if not objRow:
+            continue
+        pszName: str = objRow[0].strip()
+        if pszName == pszMoveName:
+            iMoveIndex = iRowIndex
+        elif pszName == pszBeforeName:
+            iBeforeIndex = iRowIndex
+        elif pszName == pszAfterName:
+            iAfterIndex = iRowIndex
+
+    if iMoveIndex < 0 or iBeforeIndex < 0 or iAfterIndex < 0:
+        return objRows
+
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    objMoveRow: List[str] = objOutputRows.pop(iMoveIndex)
+    if iMoveIndex < iBeforeIndex:
+        iBeforeIndex -= 1
+    if iMoveIndex < iAfterIndex:
+        iAfterIndex -= 1
+
+    iInsertIndex: int = min(iAfterIndex, iBeforeIndex) + 1
+    iInsertIndex = max(iInsertIndex, 0)
+    if iInsertIndex > len(objOutputRows):
+        iInsertIndex = len(objOutputRows)
+    objOutputRows.insert(iInsertIndex, objMoveRow)
+    return objOutputRows
+
+
+def align_vertical_rows_for_union(
+    objLeftRows: List[List[str]],
+    objRightRows: List[List[str]],
+) -> Tuple[List[List[str]], List[List[str]]]:
+    objExcludedNames: set[str] = {"合計", "本部"}
+    objLeftOrder: List[str] = [
+        objRow[0] if objRow else ""
+        for objRow in objLeftRows
+        if objRow and objRow[0] not in objExcludedNames
+    ]
+    objRightOrder: List[str] = [
+        objRow[0] if objRow else ""
+        for objRow in objRightRows
+        if objRow and objRow[0] not in objExcludedNames
+    ]
+    objUnionOrder: List[str] = []
+    objSeen: set[str] = set()
+    for pszName in objLeftOrder:
+        if pszName in objSeen:
+            continue
+        objSeen.add(pszName)
+        objUnionOrder.append(pszName)
+
+    objPositions: Dict[str, int] = {pszName: iIndex for iIndex, pszName in enumerate(objUnionOrder)}
+    iLastInsertIndex: int = -1
+    for pszName in objRightOrder:
+        if pszName in objPositions:
+            iLastInsertIndex = objPositions[pszName]
+            continue
+        iInsertIndex = iLastInsertIndex + 1
+        if iInsertIndex < 0:
+            iInsertIndex = 0
+        if iInsertIndex > len(objUnionOrder):
+            iInsertIndex = len(objUnionOrder)
+        objUnionOrder.insert(iInsertIndex, pszName)
+        objPositions = {pszName: iIndex for iIndex, pszName in enumerate(objUnionOrder)}
+        iLastInsertIndex = objPositions[pszName]
+
+    objLeftMap: Dict[str, List[str]] = {}
+    for objRow in objLeftRows:
+        if not objRow:
+            continue
+        pszName = objRow[0]
+        if pszName in objExcludedNames:
+            continue
+        if pszName in objLeftMap:
+            continue
+        objLeftMap[pszName] = objRow
+
+    objRightMap: Dict[str, List[str]] = {}
+    for objRow in objRightRows:
+        if not objRow:
+            continue
+        pszName = objRow[0]
+        if pszName in objExcludedNames:
+            continue
+        if pszName in objRightMap:
+            continue
+        objRightMap[pszName] = objRow
+
+    iLeftColumnCount: int = max((len(objRow) for objRow in objLeftRows), default=1)
+    iRightColumnCount: int = max((len(objRow) for objRow in objRightRows), default=1)
+
+    objAlignedLeft: List[List[str]] = []
+    objAlignedRight: List[List[str]] = []
+    for pszName in objUnionOrder:
+        if pszName in objLeftMap:
+            objAlignedLeft.append(list(objLeftMap[pszName]))
+        else:
+            objAlignedLeft.append([pszName] + ["0"] * max(iLeftColumnCount - 1, 0))
+
+        if pszName in objRightMap:
+            objAlignedRight.append(list(objRightMap[pszName]))
+        else:
+            objAlignedRight.append([pszName] + ["0"] * max(iRightColumnCount - 1, 0))
+
+    return objAlignedLeft, objAlignedRight
+
+
+def insert_per_hour_rows(
+    objRows: List[List[str]],
+) -> List[List[str]]:
+    if not objRows:
+        return objRows
+    iManhourRowIndex: int = -1
+    for iRowIndex, objRow in enumerate(objRows):
+        if objRow and objRow[0] == "工数":
+            iManhourRowIndex = iRowIndex
+            break
+    if iManhourRowIndex < 0:
+        return objRows
+
+    iSalesRowIndex: int = -1
+    iOperatingProfitRowIndex: int = -1
+    for iRowIndex, objRow in enumerate(objRows):
+        if not objRow:
+            continue
+        if objRow[0] == "純売上高":
+            iSalesRowIndex = iRowIndex
+        elif objRow[0] == "営業利益":
+            iOperatingProfitRowIndex = iRowIndex
+
+    if iSalesRowIndex < 0 and iOperatingProfitRowIndex < 0:
+        return objRows
+
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    objManhourRow = objOutputRows[iManhourRowIndex]
+    objSalesRow = objOutputRows[iSalesRowIndex] if iSalesRowIndex >= 0 else []
+    objOperatingProfitRow = (
+        objOutputRows[iOperatingProfitRowIndex] if iOperatingProfitRowIndex >= 0 else []
     )
-    pszCumulativeStep0001Path: Path = objBaseDirectoryPath / (
-        f"0004_PJサマリ_step0001_累計_損益計算書_{iYear}年{pszMonth}月.tsv"
+    iColumnCount = max(len(objManhourRow), len(objSalesRow), len(objOperatingProfitRow), 1)
+    objManhourHoursRow: List[str] = ["工数行(時間)"] + [""] * (iColumnCount - 1)
+    objManhourHmsRow: List[str] = ["工数行(h:mm:ss)"] + [""] * (iColumnCount - 1)
+    objSalesPerHourRow: List[str] = ["工数1時間当たり純売上高"] + [""] * (iColumnCount - 1)
+    objOperatingPerHourRow: List[str] = ["工数1時間当たり営業利益"] + [""] * (iColumnCount - 1)
+
+    for iColumnIndex in range(1, iColumnCount):
+        pszManhour = objManhourRow[iColumnIndex] if iColumnIndex < len(objManhourRow) else ""
+        fSeconds = parse_time_to_seconds(pszManhour)
+        fHours = fSeconds / 3600.0 if fSeconds > 0.0 else 0.0
+        objManhourHoursRow[iColumnIndex] = f"{fHours:.1f}"
+        objManhourHmsRow[iColumnIndex] = pszManhour
+
+        if iSalesRowIndex >= 0:
+            pszSales = objSalesRow[iColumnIndex] if iColumnIndex < len(objSalesRow) else ""
+            fSales = parse_number(pszSales)
+            fSalesPerHour = fSales / fHours if fHours > 0.0 else 0.0
+            objSalesPerHourRow[iColumnIndex] = str(int(fSalesPerHour))
+
+        if iOperatingProfitRowIndex >= 0:
+            pszOperating = (
+                objOperatingProfitRow[iColumnIndex]
+                if iColumnIndex < len(objOperatingProfitRow)
+                else ""
+            )
+            fOperating = parse_number(pszOperating)
+            fOperatingPerHour = fOperating / fHours if fHours > 0.0 else 0.0
+            objOperatingPerHourRow[iColumnIndex] = str(int(fOperatingPerHour))
+
+    iInsertIndex: int = iManhourRowIndex + 1
+    objOutputRows[iManhourRowIndex] = objManhourHoursRow
+    objOutputRows.insert(iInsertIndex, objSalesPerHourRow)
+    objOutputRows.insert(iInsertIndex + 1, objOperatingPerHourRow)
+    objOutputRows.insert(iInsertIndex + 2, objManhourHmsRow)
+    return objOutputRows
+
+
+def select_columns(
+    objRows: List[List[str]],
+    objColumnIndices: List[int],
+) -> List[List[str]]:
+    objOutputRows: List[List[str]] = []
+    for objRow in objRows:
+        objSelectedRow: List[str] = []
+        for iColumnIndex in objColumnIndices:
+            if 0 <= iColumnIndex < len(objRow):
+                objSelectedRow.append(objRow[iColumnIndex])
+            else:
+                objSelectedRow.append("")
+        objOutputRows.append(objSelectedRow)
+    return objOutputRows
+
+
+def select_columns(
+    objRows: List[List[str]],
+    objColumnIndices: List[int],
+) -> List[List[str]]:
+    objOutputRows: List[List[str]] = []
+    for objRow in objRows:
+        objSelectedRow: List[str] = []
+        for iColumnIndex in objColumnIndices:
+            if 0 <= iColumnIndex < len(objRow):
+                objSelectedRow.append(objRow[iColumnIndex])
+            else:
+                objSelectedRow.append("")
+        objOutputRows.append(objSelectedRow)
+    return objOutputRows
+
+
+def find_row_index_by_name(objRows: List[List[str]], pszName: str) -> int:
+    for iRowIndex, objRow in enumerate(objRows):
+        if not objRow:
+            continue
+        if objRow[0].strip() == pszName:
+            return iRowIndex
+    return -1
+
+
+def create_step0007_pl_cr(
+    pszDirectory: str,
+) -> None:
+    pszSinglePlStep0006Path: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0006_単月_損益計算書_E∪F.tsv",
     )
-    if not pszSingleStep0001Path.exists() or not pszCumulativeStep0001Path.exists():
+    pszSingleCostStep0006Path: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0006_単月_製造原価報告書_E∪F.tsv",
+    )
+    pszCumulativePlStep0006Path: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0006_累計_損益計算書_E∪F.tsv",
+    )
+    pszCumulativeCostStep0006Path: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0006_累計_製造原価報告書_E∪F.tsv",
+    )
+
+    if not (
+        os.path.isfile(pszSinglePlStep0006Path)
+        and os.path.isfile(pszSingleCostStep0006Path)
+        and os.path.isfile(pszCumulativePlStep0006Path)
+        and os.path.isfile(pszCumulativeCostStep0006Path)
+    ):
         return
 
-    objSingleStep0001Rows = read_tsv_rows(str(pszSingleStep0001Path))
-    objCumulativeStep0001Rows = read_tsv_rows(str(pszCumulativeStep0001Path))
-    pszSingleSummaryPath: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0001_単月_損益計算書_{iYear}年{pszMonth}月.tsv"
-    )
-    pszCumulativeSummaryPath: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0001_累計_損益計算書_{iYear}年{pszMonth}月.tsv"
-    )
-    write_tsv_rows(str(pszSingleSummaryPath), objSingleStep0001Rows)
-    write_tsv_rows(str(pszCumulativeSummaryPath), objCumulativeStep0001Rows)
+    objSinglePlRows = read_tsv_rows(pszSinglePlStep0006Path)
+    objSingleCostRows = read_tsv_rows(pszSingleCostStep0006Path)
+    objCumulativePlRows = read_tsv_rows(pszCumulativePlStep0006Path)
+    objCumulativeCostRows = read_tsv_rows(pszCumulativeCostStep0006Path)
 
-    objSingleStep0002Rows = combine_company_sg_admin_columns(objSingleStep0001Rows)
-    objCumulativeStep0002Rows = combine_company_sg_admin_columns(objCumulativeStep0001Rows)
-    pszSingleStep0002Path: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0002_単月_損益計算書_{iYear}年{pszMonth}月.tsv"
-    )
-    pszCumulativeStep0002Path: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0002_累計_損益計算書_{iYear}年{pszMonth}月.tsv"
-    )
-    write_tsv_rows(str(pszSingleStep0002Path), objSingleStep0002Rows)
-    write_tsv_rows(str(pszCumulativeStep0002Path), objCumulativeStep0002Rows)
+    if not objSinglePlRows or not objSingleCostRows or not objCumulativePlRows or not objCumulativeCostRows:
+        return
 
-    pszOrgTablePath: Path = objBaseDirectoryPath / "管轄PJ表.tsv"
-    objCompanyMap = load_org_table_company_map(str(pszOrgTablePath))
-    objSingleStep0003Rows = build_step0003_rows(objSingleStep0002Rows, objCompanyMap)
-    objCumulativeStep0003Rows = build_step0003_rows(objCumulativeStep0002Rows, objCompanyMap)
-    pszSingleStep0003Path: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0003_単月_損益計算書_{iYear}年{pszMonth}月.tsv"
-    )
-    pszCumulativeStep0003Path: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0003_累計_損益計算書_{iYear}年{pszMonth}月.tsv"
-    )
-    write_tsv_rows(str(pszSingleStep0003Path), objSingleStep0003Rows)
-    write_tsv_rows(str(pszCumulativeStep0003Path), objCumulativeStep0003Rows)
+    iSingleOperatingRowIndex: int = find_row_index_by_name(objSinglePlRows, "営業利益")
+    iSingleManhourRowIndex: int = find_row_index_by_name(objSinglePlRows, "工数行(時間)")
+    iCumulativeOperatingRowIndex: int = find_row_index_by_name(objCumulativePlRows, "営業利益")
+    iCumulativeManhourRowIndex: int = find_row_index_by_name(objCumulativePlRows, "工数行(時間)")
 
+    if iSingleOperatingRowIndex < 0 or iSingleManhourRowIndex < 0:
+        return
+    if iCumulativeOperatingRowIndex < 0 or iCumulativeManhourRowIndex < 0:
+        return
+
+    objSingle0001Rows = [list(objRow) for objRow in objSinglePlRows[: iSingleOperatingRowIndex + 1]]
+    objSingle0002Rows = [list(objRow) for objRow in objSingleCostRows[1:]]
+    objSingle0003Rows = [list(objRow) for objRow in objSinglePlRows[iSingleManhourRowIndex:]]
+    objCumulative0001Rows = [
+        list(objRow) for objRow in objCumulativePlRows[: iCumulativeOperatingRowIndex + 1]
+    ]
+    objCumulative0002Rows = [list(objRow) for objRow in objCumulativeCostRows[1:]]
+    objCumulative0003Rows = [
+        list(objRow) for objRow in objCumulativePlRows[iCumulativeManhourRowIndex:]
+    ]
+
+    pszSingle0001Path: str = os.path.join(pszDirectory, "0003_PJサマリ_step0007_単月_0001.tsv")
+    pszSingle0002Path: str = os.path.join(pszDirectory, "0003_PJサマリ_step0007_単月_0002.tsv")
+    pszSingle0003Path: str = os.path.join(pszDirectory, "0003_PJサマリ_step0007_単月_0003.tsv")
+    pszCumulative0001Path: str = os.path.join(pszDirectory, "0003_PJサマリ_step0007_累計_0001.tsv")
+    pszCumulative0002Path: str = os.path.join(pszDirectory, "0003_PJサマリ_step0007_累計_0002.tsv")
+    pszCumulative0003Path: str = os.path.join(pszDirectory, "0003_PJサマリ_step0007_累計_0003.tsv")
+
+    write_tsv_rows(pszSingle0001Path, objSingle0001Rows)
+    write_tsv_rows(pszSingle0002Path, objSingle0002Rows)
+    write_tsv_rows(pszSingle0003Path, objSingle0003Rows)
+    write_tsv_rows(pszCumulative0001Path, objCumulative0001Rows)
+    write_tsv_rows(pszCumulative0002Path, objCumulative0002Rows)
+    write_tsv_rows(pszCumulative0003Path, objCumulative0003Rows)
+
+    # step0007: 0001/0002/0003 を縦に連結して出力する
+    objSingleFinalRows: List[List[str]] = []
+    objSingleFinalRows.extend(objSingle0001Rows)
+    objSingleFinalRows.extend(objSingle0002Rows)
+    objSingleFinalRows.extend(objSingle0003Rows)
+    objCumulativeFinalRows: List[List[str]] = []
+    objCumulativeFinalRows.extend(objCumulative0001Rows)
+    objCumulativeFinalRows.extend(objCumulative0002Rows)
+    objCumulativeFinalRows.extend(objCumulative0003Rows)
+
+    pszSingleOutputPath: str = os.path.join(pszDirectory, "0003_PJサマリ_step0007_単月_PL_CR.tsv")
+    pszCumulativeOutputPath: str = os.path.join(pszDirectory, "0003_PJサマリ_step0007_累計_PL_CR.tsv")
+    write_tsv_rows(pszSingleOutputPath, objSingleFinalRows)
+    write_tsv_rows(pszCumulativeOutputPath, objCumulativeFinalRows)
+
+    if objSingleFinalRows and objCumulativeFinalRows:
+        pszStep0008Directory: str = os.path.join(os.getcwd(), "PJ_Summary_step0008_Project")
+        pszStep0009Directory: str = os.path.join(os.getcwd(), "PJ_Summary_step0009_Project")
+        pszStep0010Directory: str = os.path.join(os.getcwd(), "PJ_Summary_step0010_Project")
+        os.makedirs(pszStep0008Directory, exist_ok=True)
+        os.makedirs(pszStep0009Directory, exist_ok=True)
+        os.makedirs(pszStep0010Directory, exist_ok=True)
+        objSingleHeaderRow: List[str] = objSingleFinalRows[0]
+        objCumulativeHeaderRow: List[str] = objCumulativeFinalRows[0]
+        iMaxColumns: int = max(len(objSingleHeaderRow), len(objCumulativeHeaderRow))
+        for iColumnIndex in range(1, iMaxColumns):
+            objSingleRatioRows: List[List[str]] = []
+            objCumulativeRatioRows: List[List[str]] = []
+            if iColumnIndex < len(objSingleHeaderRow):
+                pszColumnName = objSingleHeaderRow[iColumnIndex]
+                pszOutputName = f"0003_PJサマリ_step0008_単月_{pszColumnName}.tsv"
+                pszOutputPath = os.path.join(pszStep0008Directory, pszOutputName)
+                objSingleColumnRows = [
+                    [
+                        objRow[0] if len(objRow) > 0 else "",
+                        objRow[iColumnIndex] if iColumnIndex < len(objRow) else "",
+                    ]
+                    for objRow in objSingleFinalRows
+                ]
+                write_tsv_rows(pszOutputPath, objSingleColumnRows)
+                pszStep0009Name = f"0003_PJサマリ_step0009_単月_{pszColumnName}.tsv"
+                pszStep0009Path = os.path.join(pszStep0009Directory, pszStep0009Name)
+                objSingleRatioRows = add_sales_ratio_column(objSingleColumnRows)
+                write_tsv_rows(pszStep0009Path, objSingleRatioRows)
+            if iColumnIndex < len(objCumulativeHeaderRow):
+                pszColumnName = objCumulativeHeaderRow[iColumnIndex]
+                pszOutputName = f"0003_PJサマリ_step0008_累計_{pszColumnName}.tsv"
+                pszOutputPath = os.path.join(pszStep0008Directory, pszOutputName)
+                objCumulativeColumnRows = [
+                    [
+                        objRow[0] if len(objRow) > 0 else "",
+                        objRow[iColumnIndex] if iColumnIndex < len(objRow) else "",
+                    ]
+                    for objRow in objCumulativeFinalRows
+                ]
+                write_tsv_rows(pszOutputPath, objCumulativeColumnRows)
+                pszStep0009Name = f"0003_PJサマリ_step0009_累計_{pszColumnName}.tsv"
+                pszStep0009Path = os.path.join(pszStep0009Directory, pszStep0009Name)
+                objCumulativeRatioRows = add_sales_ratio_column(objCumulativeColumnRows)
+                write_tsv_rows(pszStep0009Path, objCumulativeRatioRows)
+                if objSingleRatioRows and objCumulativeRatioRows:
+                    pszStep0010Name = f"0003_PJサマリ_step0010_単・累計_{pszColumnName}.tsv"
+                    pszStep0010Path = os.path.join(pszStep0010Directory, pszStep0010Name)
+                    objStep0010Rows = build_step0010_rows(objSingleRatioRows, objCumulativeRatioRows)
+                    write_tsv_rows(pszStep0010Path, objStep0010Rows)
+
+    move_files_to_temp(
+        [
+            pszSingle0001Path,
+            pszSingle0002Path,
+            pszSingle0003Path,
+            pszCumulative0001Path,
+            pszCumulative0002Path,
+            pszCumulative0003Path,
+        ],
+        pszDirectory,
+    )
+    move_files_to_temp_and_copy_back(
+        [pszSingleOutputPath, pszCumulativeOutputPath],
+        pszDirectory,
+    )
+
+
+def create_pj_summary(
+    pszPlPath: str,
+    objRange: Tuple[Tuple[int, int], Tuple[int, int]],
+) -> None:
+    objStart, objEnd = objRange
+    pszDirectory: str = os.path.dirname(pszPlPath)
+    iEndYear, iEndMonth = objEnd
+    pszEndMonth: str = f"{iEndMonth:02d}"
+    pszSinglePlPath: str = os.path.join(
+        pszDirectory,
+        f"損益計算書_販管費配賦_{iEndYear}年{pszEndMonth}月_A∪B_プロジェクト名_C∪D_vertical.tsv",
+    )
+    pszCumulativePlPath: str = build_cumulative_file_path(
+        pszDirectory,
+        "損益計算書",
+        objStart,
+        objEnd,
+    ).replace(".tsv", "_vertical.tsv")
+
+    objSingleRows: Optional[List[List[str]]] = None
+    if os.path.isfile(pszSinglePlPath):
+        objSingleRows = read_tsv_rows(pszSinglePlPath)
+    else:
+        pszSinglePlStep0010Path: str = os.path.join(
+            pszDirectory,
+            f"損益計算書_販管費配賦_step0010_{iEndYear}年{pszEndMonth}月_A∪B_プロジェクト名_C∪D.tsv",
+        )
+        pszSinglePlStep0010VerticalPath: str = pszSinglePlStep0010Path.replace(
+            ".tsv",
+            "_vertical.tsv",
+        )
+        if os.path.isfile(pszSinglePlStep0010VerticalPath):
+            objSingleRows = read_tsv_rows(pszSinglePlStep0010VerticalPath)
+        elif os.path.isfile(pszSinglePlStep0010Path):
+            objSingleRows = transpose_rows(read_tsv_rows(pszSinglePlStep0010Path))
+
+    objCumulativeRows: Optional[List[List[str]]] = None
+    if os.path.isfile(pszCumulativePlPath):
+        objCumulativeRows = read_tsv_rows(pszCumulativePlPath)
+    else:
+        pszCumulativePlPathHorizontal: str = pszCumulativePlPath.replace("_vertical.tsv", ".tsv")
+        if os.path.isfile(pszCumulativePlPathHorizontal):
+            objCumulativeRows = transpose_rows(read_tsv_rows(pszCumulativePlPathHorizontal))
+
+    if objSingleRows is None or objCumulativeRows is None:
+        return
+
+    objSummaryTargetColumns: List[str] = [
+        "科目名",
+        "純売上高",
+        "売上原価",
+        "売上総利益",
+        "配賦販管費",
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+    ]
+    objSingleSummaryRows: List[List[str]] = filter_rows_by_columns(
+        objSingleRows,
+        objSummaryTargetColumns,
+    )
+    objCumulativeSummaryRows: List[List[str]] = filter_rows_by_columns(
+        objCumulativeRows,
+        objSummaryTargetColumns,
+    )
+    pszSingleSummaryPath: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    pszCumulativeSummaryPath: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0001_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszSingleSummaryPath, objSingleSummaryRows)
+    write_tsv_rows(pszCumulativeSummaryPath, objCumulativeSummaryRows)
+
+    objSingleStep0002Rows = combine_company_sg_admin_columns(
+        read_tsv_rows(pszSingleSummaryPath)
+    )
+    objCumulativeStep0002Rows = combine_company_sg_admin_columns(
+        read_tsv_rows(pszCumulativeSummaryPath)
+    )
+    pszSingleStep0002Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0002_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    pszCumulativeStep0002Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0002_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszSingleStep0002Path, objSingleStep0002Rows)
+    write_tsv_rows(pszCumulativeStep0002Path, objCumulativeStep0002Rows)
+
+    pszOrgTablePath: str = os.path.join(pszDirectory, "管轄PJ表.tsv")
+    objCompanyMap = load_org_table_company_map(pszOrgTablePath)
+    objSingleStep0003Rows = build_step0003_rows(
+        read_tsv_rows(pszSingleStep0002Path),
+        objCompanyMap,
+    )
+    objCumulativeStep0003Rows = build_step0003_rows(
+        read_tsv_rows(pszCumulativeStep0002Path),
+        objCompanyMap,
+    )
+    pszSingleStep0003Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0003_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    pszCumulativeStep0003Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0003_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszSingleStep0003Path, objSingleStep0003Rows)
+    write_tsv_rows(pszCumulativeStep0003Path, objCumulativeStep0003Rows)
+    pszSingleStep0004Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0004_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    pszCumulativeStep0004Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0004_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
     objSingleStep0004Rows = build_step0004_rows_for_summary(objSingleStep0003Rows)
     objCumulativeStep0004Rows = build_step0004_rows_for_summary(objCumulativeStep0003Rows)
-    pszSingleStep0004Path: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0004_単月_損益計算書_{iYear}年{pszMonth}月.tsv"
+    write_tsv_rows(pszSingleStep0004Path, objSingleStep0004Rows)
+    write_tsv_rows(pszCumulativeStep0004Path, objCumulativeStep0004Rows)
+    pszStep0005Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0005_単・累_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    pszCumulativeStep0004Path: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0004_累計_損益計算書_{iYear}年{pszMonth}月.tsv"
-    )
-    write_tsv_rows(str(pszSingleStep0004Path), objSingleStep0004Rows)
-    write_tsv_rows(str(pszCumulativeStep0004Path), objCumulativeStep0004Rows)
-
     objStep0005Rows = build_step0005_rows_for_summary(
         objSingleStep0004Rows,
         objCumulativeStep0004Rows,
     )
-    pszStep0005Path: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0005_単・累_損益計算書_{iYear}年{pszMonth}月.tsv"
+    write_tsv_rows(pszStep0005Path, objStep0005Rows)
+    pszStep0006Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0006_単・累_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    write_tsv_rows(str(pszStep0005Path), objStep0005Rows)
-
     objStep0006Rows = build_step0006_rows_for_summary(objStep0005Rows)
-    pszStep0006Path: Path = objBaseDirectoryPath / (
-        f"0005_PJサマリ_step0006_単・累_損益計算書_{iYear}年{pszMonth}月.tsv"
-    )
-    write_tsv_rows(str(pszStep0006Path), objStep0006Rows)
-
-
-def get_target_year_month_from_filename(pszInputFilePath: str) -> Tuple[int, int]:
-    pszBaseName: str = os.path.basename(pszInputFilePath)
-    objMatch: re.Match[str] | None = re.search(r"(\d{2})\.(\d{1,2})\.csv$", pszBaseName)
-    if objMatch is None:
-        raise ValueError("入力ファイル名から対象年月を取得できません。")
-    iYearTwoDigits: int = int(objMatch.group(1))
-    iMonth: int = int(objMatch.group(2))
-    iYear: int = 2000 + iYearTwoDigits
-    return iYear, iMonth
-
-
-def normalize_project_name_sheet10(pszSource: str) -> str:
-    if pszSource.startswith("【廃番】"):
-        try:
-            code: str | None = None
-            code_index: int = -1
-            for prefix in ["J", "A", "C", "H", "M", "P"]:
-                search_from: int = 0
-                code_length: int = 4
-                if prefix == "P":
-                    code_length = 6
-                while True:
-                    found_index: int = pszSource.find(prefix, search_from)
-                    if found_index == -1:
-                        break
-                    if found_index + code_length <= len(pszSource):
-                        code = pszSource[found_index:found_index + code_length]
-                        code_index = found_index
-                        break
-                    search_from = found_index + 1
-                if code is not None:
-                    break
-            if code is None or code_index == -1:
-                return pszSource
-            head: str = pszSource[:code_index]
-            tail: str = pszSource[code_index + len(code):]
-            return code + "_" + head + tail
-        except Exception:
-            return pszSource
-
-    if pszSource.startswith("【"):
-        iBracketEndIndex: int = pszSource.find("】")
-        if iBracketEndIndex != -1:
-            pszAfterBracket: str = pszSource[iBracketEndIndex + 1:]
-            objMatch = re.search(r"(P\d{5}|[A-OQ-Z]\d{3})", pszAfterBracket)
-            if objMatch is not None:
-                pszCode: str = objMatch.group(1)
-                pszBeforeCode: str = pszAfterBracket[:objMatch.start()]
-                pszAfterCode: str = pszAfterBracket[objMatch.end():]
-                if pszAfterCode.startswith(" ") or pszAfterCode.startswith("　"):
-                    pszAfterCode = pszAfterCode[1:]
-                pszRest: str = pszSource[: iBracketEndIndex + 1] + pszBeforeCode + pszAfterCode
-                return pszCode + "_" + pszRest
-
-    if len(pszSource) >= 1 and pszSource[0] in ["J", "A", "C", "H", "M"]:
-        if len(pszSource) >= 5:
-            next_char: str = pszSource[4]
-            if next_char == "【":
-                return pszSource[:4] + "_" + pszSource[4:]
-            if next_char == " " or next_char == "　":
-                return pszSource[:4] + "_" + pszSource[5:]
-        return pszSource
-
-    if len(pszSource) >= 1 and pszSource[0] == "P":
-        if len(pszSource) >= 7:
-            next_char_p: str = pszSource[6]
-            if next_char_p == "【":
-                return pszSource[:6] + "_" + pszSource[6:]
-            if next_char_p == " " or next_char_p == "　":
-                return pszSource[:6] + "_" + pszSource[7:]
-        return pszSource
-
-    return pszSource
-
-
-def preprocess_line_content_sheet10(pszLineContent: str) -> str:
-    if pszLineContent.startswith('"'):
-        iSecondQuoteIndex: int = pszLineContent.find('"', 1)
-        if iSecondQuoteIndex != -1:
-            if iSecondQuoteIndex + 1 < len(pszLineContent) and pszLineContent[iSecondQuoteIndex + 1] == "\t":
-                pszQuotedContent: str = pszLineContent[1:iSecondQuoteIndex].replace("\t", "_")
-                pszLineContent = pszQuotedContent + pszLineContent[iSecondQuoteIndex + 1:]
-    pszLineContent = re.sub(
-        r'^"([^"]*)\t([^"]*)"([^\r\n]*)',
-        r"\1_\2\3",
-        pszLineContent,
-    )
-    pszLineContent = re.sub(r"(P\d\d\d\d\d)(?![ _\t　【])", r"\1_", pszLineContent)
-    pszLineContent = re.sub(r"([A-OQ-Z]\d\d\d)(?![ _\t　【])", r"\1_", pszLineContent)
-    pszLineContent = re.sub(r"^(J\d\d\d) +", r"\1_", pszLineContent)
-    pszLineContent = re.sub(r"([A-OQ-Z]\d\d\d)[ 　]+", r"\1_", pszLineContent)
-    pszLineContent = re.sub(r"(P\d\d\d\d\d)[ 　]+", r"\1_", pszLineContent)
-    pszLineContent = re.sub(r"\t[0-9]+\t", "\t", pszLineContent)
-    return pszLineContent
-
-
-def normalize_org_table_field_step0002(pszValue: str) -> str:
-    pszNormalized: str = pszValue.replace(" ", "_").replace("　", "_")
-    objMatchP: re.Match[str] | None = re.match(r"^(P\d{5})(.*)$", pszNormalized)
-    if objMatchP is not None:
-        pszCode: str = objMatchP.group(1)
-        pszRest: str = objMatchP.group(2)
-        if pszRest.startswith("【"):
-            pszNormalized = pszCode + "_" + pszRest
-    else:
-        objMatchOther: re.Match[str] | None = re.match(r"^([A-OQ-Z]\d{3})(.*)$", pszNormalized)
-        if objMatchOther is not None:
-            pszCodeOther: str = objMatchOther.group(1)
-            pszRestOther: str = objMatchOther.group(2)
-            if pszRestOther.startswith("【"):
-                pszNormalized = pszCodeOther + "_" + pszRestOther
-    return pszNormalized
-
-
-def normalize_org_table_project_code(pszValue: str) -> str:
-    """Normalize project code/name fields from 管轄PJ表.
-
-    Historically this script used `normalize_org_table_field_step0002` for normalization.
-    Some Codex edits referenced `normalize_org_table_project_code`; keep it as a thin
-    compatibility wrapper so downstream code does not crash.
-    """
-    return normalize_org_table_field_step0002(pszValue)
-
-# ●●add_project_code_prefix_step0003の処理ここから
-def add_project_code_prefix_step0003(
-    pszProjectName: str,
-    pszProjectCode: str,
-) -> str:
-    # 1) PJ コードが空なら何もしない
-    if not pszProjectCode:
-        return pszProjectName
-    # 2) PJ 名称が空なら、PJ コードをそのまま返す
-    if not pszProjectName:
-        return pszProjectCode
-    # 3) 接頭辞候補(コード先頭部)を抽出し、形式をチェック（末尾に "_" が必須）
-    objCodeMatch: re.Match[str] | None = re.match(r"^(P\d{5}_|[A-Z]\d{3}_)", pszProjectCode)
-    if objCodeMatch is None:
-        return pszProjectName
-    pszCodePrefix: str = objCodeMatch.group(1)
-    # 4) 同一接頭辞ガード（最優先）
-    if pszProjectName.startswith(pszCodePrefix):
-        return pszProjectName
-    # 5) 他コード付与済みガード（正規表現）
-    if re.match(r"^P\d{5}_", pszProjectName):
-        return pszProjectName
-    if re.match(r"^[A-Z]\d{3}_", pszProjectName):
-        return pszProjectName
-    # 6) 上記をすべて通過した場合のみ接頭辞を付加
-    return pszCodePrefix + pszProjectName
-# ●●add_project_code_prefix_step0003の処理ここまで
-
-
-def convert_org_table_tsv(objBaseDirectoryPath: Path) -> None:
-    objOrgTableCsvPath: Path = Path(__file__).resolve().parent / "管轄PJ表.csv"
-    objOrgTableStep0001Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0001.tsv")
-    objOrgTableStep0002Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0002.tsv")
-    objOrgTableStep0003Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0003.tsv")
-    objOrgTableTsvPath: Path = objOrgTableCsvPath.with_suffix(".tsv")
-    objOrgTableStep0004Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0004.tsv")
-    if objOrgTableCsvPath.exists():
-        with open(objOrgTableCsvPath, "r", encoding="utf-8") as objOrgTableCsvFile:
-            objOrgTableReader = csv.reader(objOrgTableCsvFile)
-            with open(objOrgTableStep0001Path, "w", encoding="utf-8") as objStep0001File:
-                objStep0001Writer = csv.writer(
-                    objStep0001File,
-                    delimiter="\t",
-                    lineterminator="\n",
-                )
-                for objRow in objOrgTableReader:
-                    objStep0001Writer.writerow(objRow)
-        with open(objOrgTableStep0001Path, "r", encoding="utf-8") as objStep0001File:
-            objStep0001Reader = csv.reader(objStep0001File, delimiter="\t")
-            with open(objOrgTableStep0002Path, "w", encoding="utf-8") as objStep0002File:
-                objStep0002Writer = csv.writer(
-                    objStep0002File,
-                    delimiter="\t",
-                    lineterminator="\n",
-                )
-                # ●●の処理ここから
-                # 管轄PJ表_step0001.tsv を読み込み、各行の 2 列目 / 3 列目に含まれる
-                # 半角・全角スペースをアンダースコアに置換して正規化し、
-                # 管轄PJ表_step0002.tsv に書き出す。
-                # 正規化仕様 (normalize_org_table_field_step0002):
-                # 1) スペース・全角スペースを "_" に置換する。
-                # 2) PJ コードが先頭にある場合、後続が「【」で始まっていれば
-                #    「コード_」の形式に整形する。
-                # 3) その他の英大文字 + 数字 3 桁のコードについても同様に
-                #    「コード_」の形式に整形する。
-                # ●●の処理ここまで
-                for objRow in objStep0001Reader:
-                    if len(objRow) >= 2:
-                        objRow[1] = normalize_org_table_field_step0002(objRow[1])
-                    if len(objRow) >= 3:
-                        objRow[2] = normalize_org_table_field_step0002(objRow[2])
-                    objStep0002Writer.writerow(objRow)
-        with open(objOrgTableStep0002Path, "r", encoding="utf-8") as objStep0002File:
-            # ●●の処理ここから
-            # 管轄PJ表_step0002.tsv を読み込み、1 行目から順に 2 列目(PJ 名称) へ
-            # add_project_code_prefix_step0003 の「コード付加」判定を行い、結果を
-            # 管轄PJ表_step0003.tsv に書き出す（中間ファイル）。
-            # 判定条件 (add_project_code_prefix_step0003):
-            # 1) PJ コードが空なら何もしない。
-            # 2) PJ 名称が空なら、PJ コードを 2 列目に書き込む。
-            # 3) PJ 名称が「英大文字 + 数字複数 + '_'」で始まっていれば付加済みとみなす。
-            # 4) それ以外は、PJ コードの先頭(_ より前)を「コード_」として付加する
-            #    （既に同じ接頭辞で始まっていれば付け足さない）。
-            # 「3 列目が存在する場合のみ」という条件は廃止し、各行で 2 列目に対して
-            # 無条件でコード付加判定を行う。
-            objStep0002Reader = csv.reader(objStep0002File, delimiter="\t")
-            with open(objOrgTableStep0003Path, "w", encoding="utf-8") as objOrgTableStep0003File:
-                objOrgTableWriter = csv.writer(
-                    objOrgTableStep0003File,
-                    delimiter="\t",
-                    lineterminator="\n",
-                )
-                for objRow in objStep0002Reader:
-                    if len(objRow) >= 2:
-                        pszProjectCode: str = objRow[2] if len(objRow) >= 3 else ""
-                        objRow[1] = add_project_code_prefix_step0003(
-                            objRow[1],
-                            pszProjectCode,
-                        )
-                    objOrgTableWriter.writerow(objRow)
-            # ●●の処理ここまで
-        with open(objOrgTableStep0003Path, "r", encoding="utf-8") as objOrgTableStep0003File:
-            # 管轄PJ表_step0003.tsv を読み込み、PJ 名称の重複接頭辞を除去して
-            # 管轄PJ表.tsv を生成する処理（再度 add_project_code_prefix_step0003 を通す）が
-            # ここに実装されていたが、仕様変更により不要となったためコメントアウト。
-            # objOrgTableStep0003Reader = csv.reader(objOrgTableStep0003File, delimiter="\t")
-            # with open(objOrgTableTsvPath, "w", encoding="utf-8") as objOrgTableTsvFile:
-            #     objOrgTableTsvWriter = csv.writer(
-            #         objOrgTableTsvFile,
-            #         delimiter="\t",
-            #         lineterminator="\n",
-            #     )
-            #     for objRow in objOrgTableStep0003Reader:
-            #         if len(objRow) >= 2:
-            #             objName = objRow[1]
-            #             objMatchP: re.Match[str] | None = re.match(r"^(P\d{5})_\1_(.*)$", objName)
-            #             objMatchOther: re.Match[str] | None = re.match(r"^([A-Z]\d{3})_\1_(.*)$", objName)
-            #             if objMatchP is not None:
-            #                 objRow[1] = f"{objMatchP.group(1)}_{objMatchP.group(2)}"
-            #             elif objMatchOther is not None:
-            #                 objRow[1] = f"{objMatchOther.group(1)}_{objMatchOther.group(2)}"
-            #         objOrgTableTsvWriter.writerow(objRow)
-            # ●●の処理ここから
-            # 管轄PJ表_step0003.tsv を読み込み、同一内容をそのまま
-            # 管轄PJ表.tsv の名前で保存する。
-            # 仕様:
-            #   - 管轄PJ表.tsv は 管轄PJ表_step0003.tsv と完全に同一内容。
-            #   - 追加の正規化処理や add_project_code_prefix_step0003 の再適用は行わない。
-            # ●●の処理ここまで
-            if objOrgTableStep0003Path != objOrgTableTsvPath:
-                shutil.copyfile(objOrgTableStep0003Path, objOrgTableTsvPath)
-    else:
-        pszOrgTableError = f"Error: 管轄PJ表.csv が見つかりません。Path = {objOrgTableCsvPath}"
-        print(pszOrgTableError)
-        write_debug_error(pszOrgTableError, objBaseDirectoryPath)
-        objRoot = tk.Tk()
-        objRoot.withdraw()
-        messagebox.showwarning("警告", pszOrgTableError)
-        objRoot.destroy()
-
-# ///////////////////////////////////////////////////////////////
-# EMBEDDED SOURCE: csv_to_tsv_h_mm_ss.py
-# ///////////////////////////////////////////////////////////////
-pszSource_csv_to_tsv_h_mm_ss_py: str = r'''# -*- coding: utf-8 -*-
-"""
-csv_to_tsv_h_mm_ss.py
-
-ジョブカン工数 CSV を読み込み、TSV に変換する。
-工数列(F列)が「h:mm」形式の場合、「h:mm:00」を付与して「h:mm:ss」にそろえる。
-また、K列も同様に「h:mm」形式の場合、「h:mm:00」を付与する。
-
-入力:  manhour_*.csv
-出力:  manhour_*.tsv
-
-注意:
-  - 入力 CSV は UTF-8 を想定。
-  - 出力 TSV は UTF-8。
-"""
-
-import sys
-import os
-import csv
-from typing import List, Dict
-
-
-# //////////////////////////////
-#
-# 指定した入力ファイルパスから、出力ファイルパスを作る関数。
-#
-# //////////////////////////////
-def build_output_file_full_path(
-    pszInputFileFullPath: str, 
-    pszOutputSuffix: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszInputFileFullPath)
-    pszBaseName: str = os.path.basename(pszInputFileFullPath)
-
-    pszStem: str = os.path.splitext(pszBaseName)[0]
-    pszOutputFileName: str = pszStem + pszOutputSuffix
-
-    pszOutputFileFullPath: str = os.path.join(pszDirectory, pszOutputFileName)
-    return pszOutputFileFullPath
-
-
-# //////////////////////////////
-#
-# 工数文字列 "h:mm" を "h:mm:ss" に揃える関数。
-# 例: "7:30" -> "7:30:00"
-#
-# //////////////////////////////
-def normalize_time_h_mm_to_h_mm_ss(
-    pszTimeText: str,
-) -> str:
-    pszText: str = (pszTimeText or "").strip()
-    if pszText == "":
-        return ""
-
-    # "h:mm:ss" はそのまま
-    if pszText.count(":") == 2:
-        return pszText
-
-    # "h:mm" の場合のみ ":00" を付与
-    if pszText.count(":") == 1:
-        return pszText + ":00"
-
-    return pszText
-
-
-# //////////////////////////////
-#
-# 入力CSVを読み込み、TSVに変換する関数。
-#
-# //////////////////////////////
-def convert_csv_to_tsv_file(
-    pszInputCsvPath: str,
-) -> str:
-    if not os.path.exists(pszInputCsvPath):
-        raise FileNotFoundError(f"Input CSV not found: {pszInputCsvPath}")
-
-    pszOutputTsvPath: str = build_output_file_full_path(pszInputCsvPath, ".tsv")
-
-    objRows: List[List[str]] = []
-
-    # まず UTF-8(BOM あり) で読み込み、失敗したら cp932 で再トライする。
-    arrEncodings: List[str] = [
-        "utf-8-sig",
-        "cp932",
-    ]
-
-    objLastDecodeError: Exception | None = None
-
-    for pszEncoding in arrEncodings:
-        try:
-            with open(
-                pszInputCsvPath,
-                mode="r",
-                encoding=pszEncoding,
-                newline="",
-            ) as objInputFile:
-                objReader: csv.reader = csv.reader(objInputFile)
-                for objRow in objReader:
-                    objRows.append(list(objRow))
-            objLastDecodeError = None
-            break
-        except UnicodeDecodeError as objError:
-            objLastDecodeError = objError
-            objRows = []
-
-    if objLastDecodeError is not None:
-        raise objLastDecodeError
-
-    # 行数が少ない場合はそのまま出す
-    if len(objRows) <= 1:
-        with open(pszOutputTsvPath, mode="w", encoding="utf-8", newline="") as objOutputFile:
-            objWriter: csv.writer = csv.writer(objOutputFile, delimiter="\t")
-            for objRow in objRows:
-                objWriter.writerow(objRow)
-        return pszOutputTsvPath
-
-    # ヘッダ行(0行目)を含めて処理
-    #   ※ 本バージョンでは、F列・K列の値が「h:mm」形式の場合、
-    #      自動的に「h:mm:00」を付与する (例: 7:30 → 7:30:00)。
-
-    # F列 = index 5
-    iTimeColumnIndexF: int = 5
-    # K列 = index 10
-    iTimeColumnIndexK: int = 10
-
-    for iRowIndex in range(1, len(objRows)):
-        objRow: List[str] = objRows[iRowIndex]
-
-        # 列数チェック
-        if iTimeColumnIndexF < len(objRow):
-            objRow[iTimeColumnIndexF] = normalize_time_h_mm_to_h_mm_ss(objRow[iTimeColumnIndexF])
-
-        if iTimeColumnIndexK < len(objRow):
-            objRow[iTimeColumnIndexK] = normalize_time_h_mm_to_h_mm_ss(objRow[iTimeColumnIndexK])
-
-        objRows[iRowIndex] = objRow
-
-    # ------------------------------------------------------------
-    # ヘッダ先頭セルだけを正規化する。
-    # 目的:
-    #   先頭セルに UTF-8 BOM(\ufeff) やダブルクォートが残っていると、
-    #   writer が " を "" にエスケープして見た目が崩れるため、
-    #   "日時" を 日時 にそろえる。
-    # 対象:
-    #   0行目(ヘッダ行)の0列目のみ。
-    # ------------------------------------------------------------
-    if len(objRows) >= 1 and len(objRows[0]) >= 1:
-        pszHeaderFirstCell: str = objRows[0][0]
-
-        # BOM を除去
-        if pszHeaderFirstCell.startswith("\ufeff"):
-            pszHeaderFirstCell = pszHeaderFirstCell.lstrip("\ufeff")
-
-        # 外側の " を 1回だけ除去し、"" を " に戻す
-        if len(pszHeaderFirstCell) >= 2 and pszHeaderFirstCell.startswith('"') and pszHeaderFirstCell.endswith('"'):
-            pszHeaderFirstCell = pszHeaderFirstCell[1:-1]
-            pszHeaderFirstCell = pszHeaderFirstCell.replace('""', '"')
-
-        # まだ "日時" の形なら再度外側だけ落とす
-        if len(pszHeaderFirstCell) >= 2 and pszHeaderFirstCell.startswith('"') and pszHeaderFirstCell.endswith('"'):
-            pszHeaderFirstCell = pszHeaderFirstCell[1:-1]
-
-        objRows[0][0] = pszHeaderFirstCell
-
-    with open(pszOutputTsvPath, mode="w", encoding="utf-8", newline="") as objOutputFile:
-        objWriter: csv.writer = csv.writer(objOutputFile, delimiter="\t")
-        for objRow in objRows:
-            objWriter.writerow(objRow)
-
-    return pszOutputTsvPath
-
-
-# //////////////////////////////
-#
-# main
-#
-# //////////////////////////////
-def main() -> int:
-    if len(sys.argv) < 2:
-        print("Usage: python csv_to_tsv_h_mm_ss.py <input_manhour_csv>")
-        return 1
-
-    pszInputCsvPath: str = sys.argv[1]
-
-    pszOutputTsvPath: str = convert_csv_to_tsv_file(pszInputCsvPath)
-    print(f"Output: {pszOutputTsvPath}")
-    return 0
-'''
-
-# ///////////////////////////////////////////////////////////////
-# EMBEDDED SOURCE: manhour_remove_uninput_rows.py
-# ///////////////////////////////////////////////////////////////
-pszSource_manhour_remove_uninput_rows_py: str = r'''###############################################################
-# Reference-only file
-# This file is provided as a logic reference.
-# DO NOT MODIFY this file.
-# Copy logic manually into make_manhour_to_sheet8_01_0001.py
-# if needed.
-# //////////////////////////////
-
-# -*- coding: utf-8 -*-
-# ///////////////////////////////////////////////////////////////
-#  manhour_remove_uninput_rows.py
-#  （G,H,I,J 列に「未入力」が含まれる行を削除する）
-# ///////////////////////////////////////////////////////////////
-
-import os
-import sys
-from typing import List
-
-import pandas as pd
-from pandas import DataFrame
-
-
-# ---------------------------------------------------------------
-# エラー内容を TSV ファイルとして書き出す
-# ---------------------------------------------------------------
-def write_error_tsv(
-    pszOutputFileFullPath: str,
-    pszErrorMessage: str,
-) -> None:
-    pszDirectory: str = os.path.dirname(pszOutputFileFullPath)
-    if len(pszDirectory) > 0:
-        os.makedirs(pszDirectory, exist_ok=True)
-
-    with open(pszOutputFileFullPath, "w", encoding="utf-8") as objFile:
-        objFile.write(pszErrorMessage)
-        if not pszErrorMessage.endswith("\n"):
-            objFile.write("\n")
-
-
-# ---------------------------------------------------------------
-# 出力ファイルパスを構築する
-#   例:
-#     入力: C:\Data\foo.tsv
-#     出力: C:\Data\foo_removed_uninput.tsv
-# ---------------------------------------------------------------
-def build_output_file_full_path(
-    pszInputFileFullPath: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszInputFileFullPath)
-    pszBaseName: str = os.path.basename(pszInputFileFullPath)
-    pszRootName: str
-    pszExt: str
-    pszRootName, pszExt = os.path.splitext(pszBaseName)
-
-    pszOutputBaseName: str = pszRootName + "_removed_uninput.tsv"
-    if len(pszDirectory) == 0:
-        return pszOutputBaseName
-    return os.path.join(pszDirectory, pszOutputBaseName)
-
-
-# ---------------------------------------------------------------
-# メイン処理本体
-#   ・入力 TSV を読み込み
-#   ・G,H,I,J 列に「未入力」がある行を削除
-#   ・*_removed_uninput.tsv として出力
-# ---------------------------------------------------------------
-def make_removed_uninput_tsv_from_manhour_tsv(
-    pszInputFileFullPath: str,
-) -> None:
-    # 入力ファイル存在チェック
-    if not os.path.isfile(pszInputFileFullPath):
-        pszDirectory: str = os.path.dirname(pszInputFileFullPath)
-        pszBaseName: str = os.path.basename(pszInputFileFullPath)
-        pszRootName: str
-        pszExt: str
-        pszRootName, pszExt = os.path.splitext(pszBaseName)
-        pszErrorFileFullPath: str = os.path.join(
-            pszDirectory,
-            pszRootName + "_error.tsv",
-        )
-
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: input TSV file not found. Path = {0}".format(
-                pszInputFileFullPath
-            ),
-        )
-        return
-
-    pszOutputFileFullPath: str = build_output_file_full_path(pszInputFileFullPath)
-
-    # TSV 読み込み
-    try:
-        objDataFrame: DataFrame = pd.read_csv(
-            pszInputFileFullPath,
-            sep="\t",
-            encoding="utf-8",
-            dtype=str,
-            keep_default_na=False,
-            engine="python",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while reading TSV for removing '未入力'. "
-            "Detail = {0}".format(objException),
-        )
-        return
-
-    # 列数チェック（G,H,I,J 列があるか: 少なくとも 10 列必要）
-    iColumnCount: int = objDataFrame.shape[1]
-    if iColumnCount < 10:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: required columns G-J do not exist (need at least 10 columns). "
-            "ColumnCount = {0}".format(iColumnCount),
-        )
-        return
-
-    # 対象列名（G,H,I,J 列）を取得
-    objColumnNameList: List[str] = list(objDataFrame.columns)
-    pszColumnG: str = objColumnNameList[6]   # G 列
-    pszColumnH: str = objColumnNameList[7]   # H 列
-    pszColumnI: str = objColumnNameList[8]   # I 列
-    pszColumnJ: str = objColumnNameList[9]   # J 列
-
-    # 「未入力」を含む行の判定
-    try:
-        objSeriesHasUninputG = (
-            objDataFrame[pszColumnG].fillna("").astype(str).str.strip() == "未入力"
-        )
-        objSeriesHasUninputH = (
-            objDataFrame[pszColumnH].fillna("").astype(str).str.strip() == "未入力"
-        )
-        objSeriesHasUninputI = (
-            objDataFrame[pszColumnI].fillna("").astype(str).str.strip() == "未入力"
-        )
-        objSeriesHasUninputJ = (
-            objDataFrame[pszColumnJ].fillna("").astype(str).str.strip() == "未入力"
-        )
-
-        objSeriesHasUninputAny = (
-            objSeriesHasUninputG
-            | objSeriesHasUninputH
-            | objSeriesHasUninputI
-            | objSeriesHasUninputJ
-        )
-
-        # 「未入力」を含まない行だけを残す
-        objDataFrameFiltered: DataFrame = objDataFrame.loc[~objSeriesHasUninputAny].copy()
-
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while filtering rows with '未入力'. "
-            "Detail = {0}".format(objException),
-        )
-        return
-
-    # TSV として書き出し
-    try:
-        objDataFrameFiltered.to_csv(
-            pszOutputFileFullPath,
-            sep="\t",
-            index=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while writing TSV without '未入力' rows. "
-            "Detail = {0}".format(objException),
-        )
-        return
-
-
-# ---------------------------------------------------------------
-# エントリポイント
-# ---------------------------------------------------------------
-def main() -> None:
-    iArgCount: int = len(sys.argv)
-
-    # 引数不足時は専用のエラー TSV を出力
-    if iArgCount < 2:
-        pszProgramName: str = os.path.basename(sys.argv[0])
-        pszErrorFileFullPath: str = "manhour_remove_uninput_rows_error_argument.tsv"
-
-        pszErrorMessage: str = (
-            "Error: input TSV file path is not specified (insufficient arguments).\n"
-            "Usage: python {0} <input_tsv_file_path>\n"
-            "Example: python {0} C:\\Data\\manhour_202511181454691c0a3179197_sorted_staff_code.tsv"
-        ).format(pszProgramName)
-
-        write_error_tsv(
-            pszErrorFileFullPath,
-            pszErrorMessage,
-        )
-        return
-
-    pszInputFileFullPath: str = sys.argv[1]
-
-    make_removed_uninput_tsv_from_manhour_tsv(pszInputFileFullPath)
-
-
-# ---------------------------------------------------------------
-if __name__ == "__main__":
-    main()
-'''
-
-# ///////////////////////////////////////////////////////////////
-# EMBEDDED SOURCE: sort_manhour_by_staff_code.py
-# ///////////////////////////////////////////////////////////////
-pszSource_sort_manhour_by_staff_code_py: str = r'''# -*- coding: utf-8 -*-
-"""
-sort_manhour_by_staff_code.py
-
-ジョブカン工数 TSV を読み込み、
-スタッフコード(列B)の数値順に並び替えて TSV を出力する。
-
-入力:  manhour_*_removed_uninput.tsv
-出力:  manhour_*_removed_uninput_sorted_staff_code.tsv
-
-注意:
-  - 入力 TSV は UTF-8
-  - 出力 TSV も UTF-8
-"""
-
-import os
-import sys
-from typing import List
-
-import pandas as pd
-from pandas import DataFrame
-
-
-# //////////////////////////////
-#
-# 指定したパスにエラーTSVを書き込む（既存スクリプト踏襲）
-#
-# //////////////////////////////
-def write_error_tsv(
-    pszOutputFileFullPath: str,
-    pszErrorMessage: str,
-) -> None:
-    pszDirectory: str = os.path.dirname(pszOutputFileFullPath)
-    if len(pszDirectory) > 0:
-        os.makedirs(pszDirectory, exist_ok=True)
-
-    with open(pszOutputFileFullPath, "w", encoding="utf-8") as objFile:
-        objFile.write(pszErrorMessage + "\n")
-
-
-# //////////////////////////////
-#
-# 出力ファイルパスを構築（拡張子 .tsv → _sorted_staff_code.tsv）
-#
-# //////////////////////////////
-def build_output_file_full_path(pszInputFileFullPath: str) -> str:
-    pszDirectory: str = os.path.dirname(pszInputFileFullPath)
-    pszBaseName: str = os.path.basename(pszInputFileFullPath)
-    pszRoot, pszExt = os.path.splitext(pszBaseName)
-
-    pszOutputBase: str = pszRoot + "_sorted_staff_code.tsv"
-    if len(pszDirectory) == 0:
-        return pszOutputBase
-    return os.path.join(pszDirectory, pszOutputBase)
-
-
-# //////////////////////////////
-#
-# メイン処理（manhour_*.tsv → *_sorted_staff_code.tsv）
-#
-# //////////////////////////////
-def make_sorted_staff_code_tsv_from_manhour_tsv(
-    pszInputFileFullPath: str,
-) -> str:
-
-    # 入力ファイル存在チェック
-    if not os.path.isfile(pszInputFileFullPath):
-        raise FileNotFoundError(f"Input TSV not found: {pszInputFileFullPath}")
-
-    # 出力ファイルパスを構築
-    pszOutputFileFullPath: str = build_output_file_full_path(pszInputFileFullPath)
-
-    # TSV 読み込み
-    try:
-        objDataFrame: DataFrame = pd.read_csv(
-            pszInputFileFullPath,
-            sep="\t",
-            dtype=str,
-            encoding="utf-8",
-            engine="python",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while reading manhour TSV for staff code sort. Detail = {0}".format(objException),
-        )
-        return pszOutputFileFullPath
-
-    # 列数チェック（2列目が必要）
-    iColumnCount: int = objDataFrame.shape[1]
-    if iColumnCount < 2:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: staff code column (2nd column) does not exist. ColumnCount = {0}".format(iColumnCount),
-        )
-        return pszOutputFileFullPath
-
-    # ソート対象列（第2列）
-    objColumnNameList: List[str] = list(objDataFrame.columns)
-    pszSortColumnName: str = objColumnNameList[1]
-
-    # -----------------------------------------------------------
-    # スタッフコード列を数値に変換して、数値順にソートする
-    # -----------------------------------------------------------
-    try:
-        # 元データをコピーして、一時列 __sort_staff_code__ を追加
-        objSorted: DataFrame = objDataFrame.copy()
-        objSorted["__sort_staff_code__"] = pd.to_numeric(
-            objSorted[pszSortColumnName],
-            errors="coerce",
-        )
-
-        # 一時列をキーに安定ソート（数値順）
-        objSorted = objSorted.sort_values(
-            by="__sort_staff_code__",
-            ascending=True,
-            kind="mergesort",
-        ).drop(columns=["__sort_staff_code__"])
-
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while sorting by staff code. Detail = {0}".format(objException),
-        )
-        return pszOutputFileFullPath
-
-    # TSV 書き込み
-    try:
-        objSorted.to_csv(
-            pszOutputFileFullPath,
-            sep="\t",
-            index=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while writing sorted staff-code TSV. Detail = {0}".format(objException),
-        )
-        return pszOutputFileFullPath
-
-    return pszOutputFileFullPath
-
-
-# //////////////////////////////
-#
-# main
-#
-# //////////////////////////////
-def main() -> int:
-    if len(sys.argv) < 2:
-        print("Usage: python sort_manhour_by_staff_code.py <input_manhour_tsv>")
-        return 1
-
-    pszInputTsvPath: str = sys.argv[1]
-
-    pszOutputTsvPath: str = make_sorted_staff_code_tsv_from_manhour_tsv(pszInputTsvPath)
-    print(f"Output: {pszOutputTsvPath}")
-    return 0
-'''
-
-# ///////////////////////////////////////////////////////////////
-# EMBEDDED SOURCE: convert_yyyy_mm_dd.py
-# ///////////////////////////////////////////////////////////////
-pszSource_convert_yyyy_mm_dd_py: str = r'''# -*- coding: utf-8 -*-
-"""
-convert_yyyy_mm_dd.py
-
-ジョブカン工数 TSV を読み込み、
-日付列を yyyy/mm/dd 形式に揃えて Sheet4.tsv を出力する。
-
-入力:  manhour_*_removed_uninput_sorted_staff_code.tsv
-出力:  Sheet4.tsv
-
-注意:
-  - 入力 TSV は UTF-8
-  - 出力 TSV も UTF-8
-"""
-
-import os
-import sys
-import re
-from typing import List
-
-import pandas as pd
-from pandas import DataFrame
-
-
-# //////////////////////////////
-#
-# 指定パスにエラーメッセージだけを書いた TSV を作成する。
-#
-# //////////////////////////////
-def write_error_tsv(
-    pszOutputFileFullPath: str,
-    pszErrorMessage: str,
-) -> None:
-    pszDirectoryName: str = os.path.dirname(pszOutputFileFullPath)
-
-    if len(pszDirectoryName) > 0 and (not os.path.exists(pszDirectoryName)):
-        os.makedirs(pszDirectoryName, exist_ok=True)
-
-    objLines: List[str] = pszErrorMessage.splitlines()
-
-    with open(pszOutputFileFullPath, mode="w", encoding="utf-8", newline="") as objFile:
-        for pszLine in objLines:
-            objFile.write(pszLine)
-            objFile.write("\n")
-
-
-# //////////////////////////////
-#
-# 指定した入力ファイルパスから、出力ファイルパスを作る関数。
-#
-# //////////////////////////////
-def build_output_file_full_path(
-    pszInputFileFullPath: str,
-    pszOutputFileName: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszInputFileFullPath)
-    pszOutputFileFullPath: str = os.path.join(pszDirectory, pszOutputFileName)
-    return pszOutputFileFullPath
-
-
-# //////////////////////////////
-#
-# 単一セルの文字列を yyyy/mm/dd 形式に正規化する。
-#
-# //////////////////////////////
-def normalize_yyyy_mm_dd_in_value(
-    objValue: object,
-    objPattern: re.Pattern,
-) -> object:
-    if not isinstance(objValue, str):
-        return objValue
-
-    pszText: str = objValue
-
-    objMatch = objPattern.match(pszText)
-    if objMatch is None:
-        return pszText
-
-    pszYear: str = objMatch.group(1)
-    pszMonthRaw: str = objMatch.group(2)
-    pszDayRaw: str = objMatch.group(3)
-
-    try:
-        iMonth: int = int(pszMonthRaw)
-        iDay: int = int(pszDayRaw)
-    except Exception:
-        return pszText
-
-    if iMonth < 1 or iMonth > 12:
-        return pszText
-    if iDay < 1 or iDay > 31:
-        return pszText
-
-    pszMonth: str = str(iMonth).zfill(2)
-    pszDay: str = str(iDay).zfill(2)
-
-    return pszYear + "/" + pszMonth + "/" + pszDay
-
-
-# //////////////////////////////
-#
-# DataFrame 全体に対して日付の正規化を行う。
-#
-# //////////////////////////////
-def normalize_yyyy_mm_dd_in_dataframe(
-    objDataFrameInput: DataFrame,
-) -> DataFrame:
-    objPattern: re.Pattern = re.compile(r"^\s*(\d{4})/(\d{1,2})/(\d{1,2})\s*$")
-
-    def _normalize_wrapper(objValue: object) -> object:
-        return normalize_yyyy_mm_dd_in_value(objValue, objPattern)
-
-    try:
-        objDataFrameOutput: DataFrame = objDataFrameInput.map(_normalize_wrapper)
-    except AttributeError:
-        objDataFrameOutput = objDataFrameInput.applymap(_normalize_wrapper)
-
-    return objDataFrameOutput
-
-
-# //////////////////////////////
-#
-# 入力TSVを読み込み、日付列を正規化して Sheet4.tsv を出力する関数。
-#
-# //////////////////////////////
-def make_sheet4_tsv_from_input_tsv(
-    pszInputTsvPath: str,
-    pszOutputSheet4TsvPath: str,
-) -> str:
-    if not os.path.exists(pszInputTsvPath):
-        raise FileNotFoundError(f"Input TSV not found: {pszInputTsvPath}")
-
-    try:
-        objDataFrameInput: DataFrame = pd.read_csv(
-            pszInputTsvPath,
-            sep="\t",
-            header=0,
-            dtype=str,
-            encoding="utf-8",
-            engine="python",
-        )
-    except Exception as objException:
-        pszErrorMessage: str = (
-            "Error: unexpected exception while reading TSV. Detail = "
-            + str(objException)
-        )
-        print(pszErrorMessage)
-        write_error_tsv(pszOutputSheet4TsvPath, pszErrorMessage)
-        return pszOutputSheet4TsvPath
-
-    try:
-        objDataFrameOutput: DataFrame = normalize_yyyy_mm_dd_in_dataframe(
-            objDataFrameInput
-        )
-    except Exception as objException:
-        pszErrorMessage: str = (
-            "Error: unexpected exception while converting date format. Detail = "
-            + str(objException)
-        )
-        print(pszErrorMessage)
-        write_error_tsv(pszOutputSheet4TsvPath, pszErrorMessage)
-        return pszOutputSheet4TsvPath
-
-    try:
-        objDataFrameOutput.to_csv(
-            pszOutputSheet4TsvPath,
-            sep="\t",
-            index=False,
-            encoding="utf-8",
-        )
-    except Exception as objException:
-        pszErrorMessage: str = (
-            "Error: unexpected exception while writing normalized TSV. Detail = "
-            + str(objException)
-        )
-        print(pszErrorMessage)
-        write_error_tsv(pszOutputSheet4TsvPath, pszErrorMessage)
-        return pszOutputSheet4TsvPath
-
-    return pszOutputSheet4TsvPath
-
-
-# //////////////////////////////
-#
-# main
-#
-# //////////////////////////////
-def main() -> int:
-    if len(sys.argv) < 2:
-        print("Usage: python convert_yyyy_mm_dd.py <input_manhour_tsv>")
-        return 1
-
-    pszInputTsvPath: str = sys.argv[1]
-    pszOutputSheet4TsvPath: str = build_output_file_full_path(pszInputTsvPath, "Sheet4.tsv")
-
-    pszOutputTsvPath: str = make_sheet4_tsv_from_input_tsv(pszInputTsvPath, pszOutputSheet4TsvPath)
-    print(f"Output: {pszOutputTsvPath}")
-    return 0
-'''
-
-# ///////////////////////////////////////////////////////////////
-# EMBEDDED SOURCE: make_unique_staff_code_list.py
-# ///////////////////////////////////////////////////////////////
-pszSource_make_unique_staff_code_list_py: str = r'''# -*- coding: utf-8 -*-
-"""
-make_unique_staff_code_list.py
-（Sheet1_yyyy_mm_dd.tsv から B列のスタッフコード一覧を作成する）
-"""
-
-import os
-import sys
-from typing import List, Set
-
-import pandas as pd
-from pandas import DataFrame, Series
-
-
-# ---------------------------------------------------------------
-# エラーメッセージを TSV として書き出す共通関数
-# ---------------------------------------------------------------
-def write_error_tsv(
-    pszOutputFileFullPath: str,
-    pszErrorMessage: str,
-) -> None:
-    pszDirectory: str = os.path.dirname(pszOutputFileFullPath)
-    if len(pszDirectory) > 0:
-        os.makedirs(pszDirectory, exist_ok=True)
-
-    with open(pszOutputFileFullPath, "w", encoding="utf-8") as objFile:
-        objFile.write(pszErrorMessage)
-        if not pszErrorMessage.endswith("\n"):
-            objFile.write("\n")
-
-
-# ---------------------------------------------------------------
-# 出力ファイルパスを構築する
-#   例:
-#     入力: C:\Data\Sheet1_2025_11_18.tsv
-#     出力: C:\Data\Sheet1_2025_11_18_unique_staff_code.tsv
-# ---------------------------------------------------------------
-def build_output_file_full_path(
-    pszInputFileFullPath: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszInputFileFullPath)
-    pszBaseName: str = os.path.basename(pszInputFileFullPath)
-    pszRootName: str
-    pszExt: str
-    pszRootName, pszExt = os.path.splitext(pszBaseName)
-
-    pszOutputBaseName: str = pszRootName + "_unique_staff_code.tsv"
-    if len(pszDirectory) == 0:
-        return pszOutputBaseName
-    return os.path.join(pszDirectory, pszOutputBaseName)
-
-
-# ---------------------------------------------------------------
-# 実処理本体
-#   ・Sheet1_yyyy_mm_dd.tsv を読み込み
-#   ・B列（2列目）の重複を除いた一覧を作成
-#   ・*_unique_staff_code.tsv として出力
-# ---------------------------------------------------------------
-def make_unique_staff_code_tsv_from_sheet1_tsv(
-    pszInputFileFullPath: str,
-) -> None:
-    # 入力ファイル存在チェック
-    if not os.path.isfile(pszInputFileFullPath):
-        pszDirectory: str = os.path.dirname(pszInputFileFullPath)
-        pszBaseName: str = os.path.basename(pszInputFileFullPath)
-        pszRootName: str
-        pszExt: str
-        pszRootName, pszExt = os.path.splitext(pszBaseName)
-        pszErrorFileFullPath: str = os.path.join(
-            pszDirectory,
-            pszRootName + "_error.tsv",
-        )
-
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: input TSV file not found. Path = {0}".format(
-                pszInputFileFullPath
-            ),
-        )
-        return
-
-    pszOutputFileFullPath: str = build_output_file_full_path(pszInputFileFullPath)
-
-    # TSV 読み込み
-    try:
-        objDataFrame: DataFrame = pd.read_csv(
-            pszInputFileFullPath,
-            sep="\t",
-            encoding="utf-8",
-            dtype=str,
-            keep_default_na=False,
-            engine="python",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while reading TSV for unique staff code list. "
-            "Detail = {0}".format(objException),
-        )
-        return
-
-    # 列数チェック（B列が存在するか: 少なくとも 2 列必要）
-    iColumnCount: int = objDataFrame.shape[1]
-    if iColumnCount < 2:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: required column B does not exist (need at least 2 columns). "
-            "ColumnCount = {0}".format(iColumnCount),
-        )
-        return
-
-    # B列のヘッダ名とデータ列を取得
-    objColumnNameList: List[str] = list(objDataFrame.columns)
-    pszStaffCodeColumnName: str = objColumnNameList[1]
-
-    objSeriesStaffCode: Series = objDataFrame.iloc[:, 1]
-
-    # B列の値から、空白行を除き、出現順を保ったまま重複を除去する
-    try:
-        objListUniqueStaffCode: List[str] = []
-        objSetSeen: Set[str] = set()
-
-        for pszValueRaw in objSeriesStaffCode.tolist():
-            pszValue: str = "" if pszValueRaw is None else str(pszValueRaw)
-            pszValueStripped: str = pszValue.strip()
-
-            # 空文字列は UNIQUE 対象から除外
-            if pszValueStripped == "":
-                continue
-
-            if pszValueStripped in objSetSeen:
-                continue
-
-            objSetSeen.add(pszValueStripped)
-            objListUniqueStaffCode.append(pszValueStripped)
-
-        # 出力用 DataFrame を作成（1列のみ）
-        objOutputDataFrame: DataFrame = DataFrame(
-            {pszStaffCodeColumnName: objListUniqueStaffCode}
-        )
-
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while creating unique staff code list. "
-            "Detail = {0}".format(objException),
-        )
-        return
-
-    # TSV として書き出し
-    try:
-        objOutputDataFrame.to_csv(
-            pszOutputFileFullPath,
-            sep="\t",
-            index=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while writing unique staff code TSV. "
-            "Detail = {0}".format(objException),
-        )
-        return
-
-
-# ---------------------------------------------------------------
-# エントリポイント
-# ---------------------------------------------------------------
-def main() -> None:
-    iArgCount: int = len(sys.argv)
-
-    # 引数不足時は専用のエラー TSV を出力
-    if iArgCount < 2:
-        pszProgramName: str = os.path.basename(sys.argv[0])
-        pszErrorFileFullPath: str = "make_unique_staff_code_list_error_argument.tsv"
-
-        pszErrorMessage: str = (
-            "Error: input TSV file path is not specified (insufficient arguments).\n"
-            "Usage: python {0} <input_tsv_file_path>\n"
-            "Example: python {0} C:\\Data\\Sheet1_2025_11_18.tsv"
-        ).format(pszProgramName)
-
-        write_error_tsv(
-            pszErrorFileFullPath,
-            pszErrorMessage,
-        )
-        return
-
-    pszInputFileFullPath: str = sys.argv[1]
-
-    make_unique_staff_code_tsv_from_sheet1_tsv(pszInputFileFullPath)
-
-
-# ---------------------------------------------------------------
-if __name__ == "__main__":
-    main()
-'''
-
-# ///////////////////////////////////////////////////////////////
-# EMBEDDED SOURCE: make_staff_code_range.py
-# ///////////////////////////////////////////////////////////////
-pszSource_make_staff_code_range_py: str = r'''###############################################################
-# Reference-only file
-# This file is provided as a logic reference.
-# DO NOT MODIFY this file.
-# Copy logic manually into make_manhour_to_sheet8_01_0001.py
-# if needed.
-# //////////////////////////////
-
-# -*- coding: utf-8 -*-
-# ///////////////////////////////////////////////////////////////
-#  make_staff_code_range.py
-#  （Sheet1.tsv からスタッフコードごとの行範囲一覧を作成する）
-# ///////////////////////////////////////////////////////////////
-
-import os
-import sys
-from typing import Dict, List, Tuple
-
-import pandas as pd
-from pandas import DataFrame, Series
-
-
-# ---------------------------------------------------------------
-# エラーメッセージを TSV として書き出す共通関数
-# ---------------------------------------------------------------
-def write_error_tsv(
-    pszOutputFileFullPath: str,
-    pszErrorMessage: str,
-) -> None:
-    """
-    指定パスにエラーメッセージだけを書き込む。
-    末尾に改行が無ければ追加する。
-    """
-    pszDirectoryFullPath: str = os.path.dirname(pszOutputFileFullPath)
-    if len(pszDirectoryFullPath) > 0:
-        os.makedirs(pszDirectoryFullPath, exist_ok=True)
-
-    with open(pszOutputFileFullPath, "w", encoding="utf-8") as objFile:
-        objFile.write(pszErrorMessage)
-        if not pszErrorMessage.endswith("\n"):
-            objFile.write("\n")
-
-
-# ---------------------------------------------------------------
-# 出力ファイルパスを構築する
-#   例:
-#     入力: C:\Data\Sheet1_2025_11_18.tsv
-#     出力: C:\Data\Sheet1_2025_11_18_staff_code_range.tsv
-# ---------------------------------------------------------------
-def build_output_file_full_path(
-    pszInputFileFullPath: str,
-) -> str:
-    pszDirectoryFullPath: str = os.path.dirname(pszInputFileFullPath)
-    pszBaseFileName: str = os.path.basename(pszInputFileFullPath)
-    pszRootName: str
-    pszExt: str
-    pszRootName, pszExt = os.path.splitext(pszBaseFileName)
-
-    pszOutputFileName: str = pszRootName + "_staff_code_range.tsv"
-
-    if len(pszDirectoryFullPath) == 0:
-        return pszOutputFileName
-
-    return os.path.join(pszDirectoryFullPath, pszOutputFileName)
-
-
-# ---------------------------------------------------------------
-# スタッフコード列から
-#   ・ユニークなスタッフコード一覧
-#   ・各コードの (最初の行インデックス, 最後の行インデックス)
-# を求める
-# ---------------------------------------------------------------
-def analyze_staff_code_column(
-    objSeriesStaffCode: Series,
-) -> Tuple[List[str], Dict[str, Tuple[int, int]]]:
-    """
-    B列(スタッフコード列)を解析して、
-      ・ユニークなスタッフコード一覧(出現順)
-      ・各コードの最初と最後の DataFrame 行インデックス
-    を返す。
-    空文字列は無視する。
-    """
-    objListUniqueStaffCode: List[str] = []
-    objDictCodeToRange: Dict[str, Tuple[int, int]] = {}
-
-    iRowCount: int = objSeriesStaffCode.shape[0]
-    for iRowIndex in range(iRowCount):
-        objValue: object = objSeriesStaffCode.iat[iRowIndex]
-        pszRaw: str = "" if objValue is None else str(objValue)
-        pszCode: str = pszRaw.strip()
-
-        # 空白のみ（または完全な空）のセルはスキップ
-        if pszCode == "":
+    write_tsv_rows(pszStep0006Path, objStep0006Rows)
+
+    objSingleOutputRows: List[List[str]] = []
+    for objRow in objSingleRows:
+        pszName: str = objRow[0] if objRow else ""
+        if pszName == "合計" or pszName.startswith("C"):
             continue
-
-        # 初めて登場したコードはユニークリストに追加
-        if pszCode not in objDictCodeToRange:
-            objListUniqueStaffCode.append(pszCode)
-            objDictCodeToRange[pszCode] = (iRowIndex, iRowIndex)
-        else:
-            # 既に辞書にある場合は「最後のインデックス」だけ更新
-            iFirstIndex: int
-            iLastIndex: int
-            iFirstIndex, iLastIndex = objDictCodeToRange[pszCode]
-            objDictCodeToRange[pszCode] = (iFirstIndex, iRowIndex)
-
-    return objListUniqueStaffCode, objDictCodeToRange
-
-
-# ---------------------------------------------------------------
-# 実処理本体
-#   ・Sheet1.tsv を読み込み
-#   ・B列（2列目）のスタッフコードごとに
-#       開始行・終了行を求める
-#   ・*_staff_code_range.tsv として出力
-# ---------------------------------------------------------------
-def make_staff_code_range_tsv_from_sheet1_tsv(
-    pszInputFileFullPath: str,
-) -> None:
-    # 入力ファイル存在チェック
-    if not os.path.isfile(pszInputFileFullPath):
-        pszDirectoryFullPath: str = os.path.dirname(pszInputFileFullPath)
-        pszBaseFileName: str = os.path.basename(pszInputFileFullPath)
-        pszBase: str
-        pszExt: str
-        pszBase, pszExt = os.path.splitext(pszBaseFileName)
-
-        pszOutputFileFullPath: str = os.path.join(
-            pszDirectoryFullPath,
-            pszBase + "_error.tsv",
-        )
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: input TSV file not found. Path = " + pszInputFileFullPath + "\n",
-        )
-        return
-
-    pszOutputFileFullPath: str = build_output_file_full_path(pszInputFileFullPath)
-
-    # TSV 読み込み
-    try:
-        objDataFrameInput: DataFrame = pd.read_csv(
-            pszInputFileFullPath,
-            sep="\t",
-            encoding="utf-8",
-            dtype=str,
-            keep_default_na=False,
-            engine="python",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while reading TSV for staff code range. "
-            "Detail = " + str(objException) + "\n",
-        )
-        return
-
-    # 列数チェック（B列が存在するか: 少なくとも 2 列必要）
-    iColumnCount: int = objDataFrameInput.shape[1]
-    if iColumnCount < 2:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: required column B does not exist (need at least 2 columns). "
-            "ColumnCount = {0}\n".format(iColumnCount),
-        )
-        return
-
-    # B列（スタッフコード列）のヘッダ名とデータ列を取得
-    objColumnNameList: List[str] = list(objDataFrameInput.columns)
-    pszStaffCodeColumnName: str = objColumnNameList[1]
-    objSeriesStaffCode: Series = objDataFrameInput.iloc[:, 1]
-
-    # スタッフコード列を解析して
-    #   ・ユニークなスタッフコード一覧
-    #   ・各コードの (最初の行インデックス, 最後の行インデックス)
-    # を取得
-    try:
-        objListUniqueStaffCode: List[str]
-        objDictCodeToRange: Dict[str, Tuple[int, int]]
-        objListUniqueStaffCode, objDictCodeToRange = analyze_staff_code_column(
-            objSeriesStaffCode
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while analyzing staff code column. "
-            "Detail = " + str(objException) + "\n",
-        )
-        return
-
-    # 有効なスタッフコードが 1 件も無い場合はエラーとする
-    if len(objListUniqueStaffCode) == 0:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: no valid staff code found in column B.\n",
-        )
-        return
-
-    # 出力用のデータを準備
-    objListOutputCode: List[str] = []
-    objListOutputStartRow: List[int] = []
-    objListOutputEndRow: List[int] = []
-
-    # DataFrame の行インデックス 0 が Excel 行 2 に対応するので
-    # Excel 行番号 = インデックス + 2
-    for pszCode in objListUniqueStaffCode:
-        if pszCode not in objDictCodeToRange:
-            write_error_tsv(
-                pszOutputFileFullPath,
-                "Error: internal inconsistency. Code not found in range map. "
-                "Code = " + pszCode + "\n",
-            )
-            return
-
-        iFirstIndex: int
-        iLastIndex: int
-        iFirstIndex, iLastIndex = objDictCodeToRange[pszCode]
-
-        iStartRow: int = iFirstIndex + 2
-        iEndRow: int = iLastIndex + 2
-
-        objListOutputCode.append(pszCode)
-        objListOutputStartRow.append(iStartRow)
-        objListOutputEndRow.append(iEndRow)
-
-    # 出力 DataFrame を構築
-    pszStartColumnName: str = "開始行"
-    pszEndColumnName: str = "終了行"
-
-    objDataFrameOutput: DataFrame = DataFrame(
-        {
-            pszStaffCodeColumnName: objListOutputCode,
-            pszStartColumnName: objListOutputStartRow,
-            pszEndColumnName: objListOutputEndRow,
-        }
-    )
-
-    # TSV として書き出し
-    try:
-        objDataFrameOutput.to_csv(
-            pszOutputFileFullPath,
-            sep="\t",
-            index=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszOutputFileFullPath,
-            "Error: unexpected exception while writing staff code range TSV. "
-            "Detail = " + str(objException) + "\n",
-        )
-        return
-
-
-# ---------------------------------------------------------------
-# main（引数チェック）
-# ---------------------------------------------------------------
-def main() -> None:
-    """
-    引数チェックを行い、実処理本体を呼び出す。
-    """
-    iArgCount: int = len(sys.argv)
-
-    # 引数不足時は専用のエラー TSV を出力して終了
-    if iArgCount < 2:
-        pszProgramName: str = os.path.basename(sys.argv[0])
-
-        pszLine1: str = (
-            "Error: input TSV file path is not specified (insufficient arguments)."
-        )
-        pszLine2: str = "Usage: python {0} <input_tsv_file_path>".format(
-            pszProgramName
-        )
-        pszLine3: str = (
-            "Example: python {0} C:\\Data\\Sheet1_2025_11_18.tsv".format(
-                pszProgramName
-            )
-        )
-
-        write_error_tsv(
-            "make_staff_code_rang_error_argument.tsv",
-            pszLine1 + "\n" + pszLine2 + "\n" + pszLine3 + "\n",
-        )
-        return
-
-    pszInputFileFullPath: str = sys.argv[1]
-
-    make_staff_code_range_tsv_from_sheet1_tsv(pszInputFileFullPath)
-
-
-# ---------------------------------------------------------------
-if __name__ == "__main__":
-    main()
-'''
-
-# ///////////////////////////////////////////////////////////////
-# EMBEDDED SOURCE: make_sheet6_from_sheet4.py
-# ///////////////////////////////////////////////////////////////
-pszSource_make_sheet6_from_sheet4_py: str = r'''# -*- coding: utf-8 -*-
-"""
- make_sheet6_from_sheet4.py
- （Sheet4.tsv と Sheet4_staff_code_range.tsv から Sheet6.tsv を作成する）
-
- 目的:
-   ・Sheet4.tsv（ジョブカン工数明細）と
-     Sheet4_staff_code_range.tsv（スタッフ毎の行範囲）を読み込み、
-     「スタッフごとに使用しているプロジェクト名一覧」を横方向に並べた
-     Sheet6.tsv を作成する。
-
- 前提:
-   ・Sheet4.tsv は、Excel の Sheet4 を .tsv 化したもの。
-     ヘッダー行あり、区切りはタブ、UTF-8。
-     少なくとも次の列が存在すること:
-       - "スタッフコード"
-       - "プロジェクト名"
-
-   ・Sheet4_staff_code_range.tsv は、Excel 上の
-     「スタッフコード」「開始行」「終了行」の 3 列を
-     そのまま .tsv 化したもの。
-
-     A列: スタッフコード
-     B列: 開始行（Excel の行番号。=MATCH(A2, Sheet4!B:B, 0) の結果など）
-     C列: 終了行（次のスタッフの開始行-1 等。ROW() 由来の Excel 行番号）
-
-     ※開始行・終了行は「Excel の行番号（1 始まり・ヘッダーを含む）」とする。
-       Python 側では、ヘッダーを除いた DataFrame の行番号に変換して用いる。
-
- 出力:
-   ・Sheet6.tsv（同じフォルダに作成）
-     1行目: 1,2,3,...（スタッフ列の通し番号）
-     2行目: スタッフコード（Sheet4_staff_code_range.tsv の 1 列目の値）
-     3行目以降: 各列が 1 人のスタッフを表し、そのスタッフの
-                 「プロジェクト名」一覧（昇順ソート＋重複削除済み）を縦方向に並べる。
-
- 実行例:
-   python make_sheet6_from_sheet4.py Sheet4.tsv Sheet4_staff_code_range.tsv
-
- ===============================================================
-"""
-
-import os
-import sys
-from typing import List
-
-import pandas as pd
-from pandas import DataFrame
-
-
-# ---------------------------------------------------------------
-# 指定したパスにエラーTSVを書き込む（既存スクリプト踏襲）
-# ---------------------------------------------------------------
-def write_error_tsv(
-    pszOutputFileFullPath: str,
-    pszErrorMessage: str,
-) -> None:
-    pszDirectory: str = os.path.dirname(pszOutputFileFullPath)
-    if len(pszDirectory) > 0:
-        os.makedirs(pszDirectory, exist_ok=True)
-
-    with open(pszOutputFileFullPath, "w", encoding="utf-8") as objFile:
-        objFile.write(pszErrorMessage + "\n")
-
-
-# ---------------------------------------------------------------
-# 出力ファイルパスを構築（Sheet4.tsv のフォルダに Sheet6.tsv を出力）
-# ---------------------------------------------------------------
-def build_output_file_full_path(
-    pszSheet4FileFullPath: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszSheet4FileFullPath)
-    pszOutputBaseName: str = "Sheet6.tsv"
-    if len(pszDirectory) == 0:
-        return pszOutputBaseName
-    return os.path.join(pszDirectory, pszOutputBaseName)
-
-
-# ---------------------------------------------------------------
-# 0 始まり列インデックス → Excel 列名（A, B, ..., Z, AA, AB, ...）
-# （今回は 2 行目に式は出力しないが、既存コードをそのまま残している）
-# ---------------------------------------------------------------
-def convert_column_index_to_excel_column_name(
-    iColumnIndex: int,
-) -> str:
-    iWorkIndex: int = iColumnIndex
-    pszColumnName: str = ""
-
-    while True:
-        iQuotient, iRemainder = divmod(iWorkIndex, 26)
-        cChar: str = chr(ord("A") + iRemainder)
-        pszColumnName = cChar + pszColumnName
-        if iQuotient == 0:
-            break
-        iWorkIndex = iQuotient - 1
-
-    return pszColumnName
-
-
-# ---------------------------------------------------------------
-# Sheet4.tsv と Sheet4_staff_code_range.tsv から Sheet6.tsv を作成する
-# ---------------------------------------------------------------
-def make_sheet6_from_sheet4(
-    pszSheet4FileFullPath: str,
-    pszRangeFileFullPath: str,
-) -> None:
-
-    # 出力ファイルパス（エラー時もこのフォルダを基準にする）
-    pszOutputFileFullPath: str = build_output_file_full_path(pszSheet4FileFullPath)
-    pszErrorFileFullPath: str = pszOutputFileFullPath.replace(".tsv", "_error.tsv")
-
-    # 入力ファイル存在チェック（Sheet4）
-    if not os.path.isfile(pszSheet4FileFullPath):
-        write_error_tsv(
-            pszSheet4FileFullPath.replace(".tsv", "_error.tsv"),
-            "Error: Sheet4 TSV file not found. Path = {0}".format(pszSheet4FileFullPath),
-        )
-        return
-
-    # 入力ファイル存在チェック（Sheet4_staff_code_range）
-    if not os.path.isfile(pszRangeFileFullPath):
-        write_error_tsv(
-            pszRangeFileFullPath.replace(".tsv", "_error.tsv"),
-            "Error: Sheet4_staff_code_range TSV file not found. Path = {0}".format(pszRangeFileFullPath),
-        )
-        return
-
-    # Sheet4.tsv 読み込み
-    try:
-        objDataFrameSheet4: DataFrame = pd.read_csv(
-            pszSheet4FileFullPath,
-            sep="\t",
-            dtype=str,
-            encoding="utf-8",
-            engine="python",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: unexpected exception while reading Sheet4 TSV. Detail = {0}".format(objException),
-        )
-        return
-
-    # 必須列チェック（スタッフコード・プロジェクト名）
-    objSheet4Columns: List[str] = list(objDataFrameSheet4.columns)
-    if ("スタッフコード" not in objSheet4Columns) or ("プロジェクト名" not in objSheet4Columns):
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: required columns not found in Sheet4 TSV. "
-            "Required columns: スタッフコード, プロジェクト名. "
-            "Columns = {0}".format(", ".join(objSheet4Columns)),
-        )
-        return
-
-    # Sheet4_staff_code_range.tsv 読み込み
-    try:
-        objDataFrameRange: DataFrame = pd.read_csv(
-            pszRangeFileFullPath,
-            sep="\t",
-            dtype=str,
-            encoding="utf-8",
-            engine="python",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: unexpected exception while reading Sheet4_staff_code_range TSV. Detail = {0}".format(objException),
-        )
-        return
-
-    # 列数チェック（少なくとも 3 列: スタッフコード / 開始行 / 終了行）
-    iRangeColumnCount: int = objDataFrameRange.shape[1]
-    if iRangeColumnCount < 3:
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: Sheet4_staff_code_range TSV must have at least 3 columns "
-            "(staff_code, start_row, end_row). ColumnCount = {0}".format(iRangeColumnCount),
-        )
-        return
-
-    # 開始行・終了行を数値に変換（Excel の行番号 → 後で DataFrame の行番号に変換）
-    try:
-        objDataFrameRange = objDataFrameRange.copy()
-        # 1列目: スタッフコード
-        # 2列目: 開始行（Excel 行番号）
-        # 3列目: 終了行（Excel 行番号）
-        objDataFrameRange["__start_row_excel__"] = pd.to_numeric(
-            objDataFrameRange.iloc[:, 1],
-            errors="coerce",
-        )
-        objDataFrameRange["__end_row_excel__"] = pd.to_numeric(
-            objDataFrameRange.iloc[:, 2],
-            errors="coerce",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: unexpected exception while converting start/end rows to numeric. Detail = {0}".format(
-                objException
-            ),
-        )
-        return
-
-    # NaN チェック
-    if objDataFrameRange["__start_row_excel__"].isna().any() or objDataFrameRange["__end_row_excel__"].isna().any():
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: start_row or end_row contains non-numeric value in Sheet4_staff_code_range TSV.",
-        )
-        return
-
-    # スタッフごとのプロジェクト名一覧（列ごと）とスタッフコード一覧を作成
-    objListProjectListPerStaff: List[List[str]] = []
-    objListStaffCode: List[str] = []
-
-    iSheet4RowCount: int = objDataFrameSheet4.shape[0]
-
-    for iIndex, objRow in objDataFrameRange.iterrows():
-        # スタッフコード（そのまま文字列として保持）
-        pszStaffCode: str = str(objRow.iloc[0])
-        objListStaffCode.append(pszStaffCode)
-
-        # Excel 上の行番号（ヘッダーを含む 1 始まり）
-        iStartRowExcel: int = int(objRow["__start_row_excel__"])
-        iEndRowExcel: int = int(objRow["__end_row_excel__"])
-
-        # Excel 行番号 → DataFrame の行インデックスに変換
-        # Excel: 1 行目 = ヘッダー, 2 行目 = DataFrame index 0
-        # → DataFrame index = ExcelRow - 2
-        iStartIndex: int = iStartRowExcel - 2
-        iEndIndex: int = iEndRowExcel - 2
-
-        # 範囲の妥当性チェック
-        if (iStartIndex < 0) or (iEndIndex < 0) or (iStartIndex > iEndIndex) or (iEndIndex >= iSheet4RowCount):
-            write_error_tsv(
-                pszErrorFileFullPath,
-                "Error: invalid row range for staff code {0}. "
-                "StartExcel={1}, EndExcel={2}, StartIndex={3}, EndIndex={4}, Sheet4RowCount={5}".format(
-                    pszStaffCode,
-                    iStartRowExcel,
-                    iEndRowExcel,
-                    iStartIndex,
-                    iEndIndex,
-                    iSheet4RowCount,
-                ),
-            )
-            return
-
-        # 該当範囲の行を抽出
-        objDataFrameSub: DataFrame = objDataFrameSheet4.iloc[iStartIndex : iEndIndex + 1]
-
-        # 念のためスタッフコードでフィルタ（行範囲が正しければ全て一致するはず）
-        objDataFrameSub = objDataFrameSub[objDataFrameSub["スタッフコード"] == pszStaffCode]
-
-        # プロジェクト名列だけを取り出し、NaN・空白を除去
-        objSeriesPj: pd.Series = objDataFrameSub["プロジェクト名"].dropna()
-        objSeriesPj = objSeriesPj.astype(str)
-        objSeriesPj = objSeriesPj[objSeriesPj.str.strip() != ""]
-
-        # 昇順ソート → 重複削除（Excel の UNIQUE(SORT()) と同等の結果を目指す）
-        objSeriesPjSorted: pd.Series = objSeriesPj.sort_values()
-        objSeriesPjUnique: pd.Series = objSeriesPjSorted.drop_duplicates()
-
-        objProjectList: List[str] = objSeriesPjUnique.tolist()
-        objListProjectListPerStaff.append(objProjectList)
-
-    # スタッフ数
-    iStaffCount: int = len(objListProjectListPerStaff)
-
-    # スタッフが 0 人なら空ファイルを出力して終了
-    if iStaffCount == 0:
-        try:
-            objEmpty: DataFrame = DataFrame([])
-            objEmpty.to_csv(
-                pszOutputFileFullPath,
-                sep="\t",
-                index=False,
-                header=False,
-                encoding="utf-8",
-                lineterminator="\n",
-            )
-        except Exception as objException:
-            write_error_tsv(
-                pszErrorFileFullPath,
-                "Error: unexpected exception while writing empty Sheet6 TSV. Detail = {0}".format(objException),
-            )
-        return
-
-    # 各スタッフの最大プロジェクト数
-    iMaxProjectCount: int = max(len(objList) for objList in objListProjectListPerStaff)
-
-    # Sheet6 全体行の 2 次元リストを構築
-    objRows: List[List[str]] = []
-
-    # 1 行目: 1,2,3,...（スタッフ列の通し番号）
-    objRow1: List[str] = [str(iIndex + 1) for iIndex in range(iStaffCount)]
-    objRows.append(objRow1)
-
-    # 2 行目: スタッフコード（Sheet4_staff_code_range.tsv の 1 列目の値）
-    objRow2: List[str] = [str(pszCode) for pszCode in objListStaffCode]
-    objRows.append(objRow2)
-
-    # 3 行目以降: 各列ごとに「プロジェクト名」一覧を縦に並べる
-    for iPjIndex in range(iMaxProjectCount):
-        objRow: List[str] = []
-        for iStaffIndex in range(iStaffCount):
-            objProjectList: List[str] = objListProjectListPerStaff[iStaffIndex]
-            if iPjIndex < len(objProjectList):
-                objRow.append(objProjectList[iPjIndex])
-            else:
-                objRow.append("")
-        objRows.append(objRow)
-
-    # DataFrame に変換して TSV 出力（ヘッダーなし）
-    try:
-        objDataFrameOutput: DataFrame = DataFrame(objRows)
-        objDataFrameOutput.to_csv(
-            pszOutputFileFullPath,
-            sep="\t",
-            index=False,
-            header=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszErrorFileFullPath,
-            "Error: unexpected exception while writing Sheet6 TSV. Detail = {0}".format(objException),
-        )
-        return
-
-
-# ---------------------------------------------------------------
-# エントリポイント
-# ---------------------------------------------------------------
-def main() -> None:
-    iArgCount: int = len(sys.argv)
-
-    # 引数不足 → _error_argument.tsv を出力
-    if iArgCount < 3:
-        pszProgram: str = os.path.basename(sys.argv[0])
-        pszErrorFile: str = "make_sheet6_from_sheet4_error_argument.tsv"
-
-        write_error_tsv(
-            pszErrorFile,
-            "Error: input TSV file paths are not specified (insufficient arguments).\n"
-            "Usage: python {0} <Sheet4_tsv_file_path> <Sheet4_staff_code_range_tsv_file_path>\n"
-            "Example: python {0} Sheet4.tsv Sheet4_staff_code_range.tsv".format(pszProgram),
-        )
-        return
-
-    pszSheet4FileFullPath: str = sys.argv[1]
-    pszRangeFileFullPath: str = sys.argv[2]
-
-    make_sheet6_from_sheet4(
-        pszSheet4FileFullPath,
-        pszRangeFileFullPath,
-    )
-
-
-# ---------------------------------------------------------------
-if __name__ == "__main__":
-    main()
-'''
-
-# ///////////////////////////////////////////////////////////////
-# EMBEDDED SOURCE: make_sheet789_from_sheet4.py
-# ///////////////////////////////////////////////////////////////
-pszSource_make_sheet789_from_sheet4_py: str = r'''# -*- coding: utf-8 -*-
-# //////////////////////////////
-# Reference-only file
-# This file is provided as a logic reference.
-# DO NOT MODIFY this file.
-# Copy logic manually into make_manhour_to_sheet8_01_0001.py
-# if needed.
-# //////////////////////////////
-
-# -*- coding: utf-8 -*-
-# ///////////////////////////////////////////////////////////////
-#  make_sheet789_from_sheet4.py
-#  （Sheet4.tsv / Sheet4_staff_code_range.tsv / Sheet6.tsv から
-#    Sheet7.tsv と Sheet8.tsv と Sheet9.tsv を作成する・Sheet6主体アルゴリズム版）
-#
-#  目的:
-#    ・Sheet6.tsv を「マスタ」として用い、
-#      - Sheet6 の 2 行目に並ぶスタッフコードの順番をそのまま採用し、
-#      - 各列の 3 行目以降に並ぶプロジェクト名一覧をそのまま利用して、
-#      Sheet7.tsv / Sheet8.tsv を作成する。
-#
-#    ・工数の実データは Sheet4.tsv から読み取り、
-#      スタッフコードとプロジェクト名毎に工数を合計する。
-#
-#    ・Sheet9.tsv には「氏名・スタッフコード」の一覧を重複なくもれなく出力する。
-#      1 行目はヘッダー行（氏名, スタッフコード）とする。
-#
-#  各シートのイメージ:
-#
-#    Sheet6.tsv（make_sheet6_from_sheet4.py の出力）
-#      1 行目: 1, 2, 3, ...                   ← スタッフ通し番号
-#      2 行目: スタッフコード(1列目), スタッフコード(2列目), ...
-#      3 行目以降: 各列のスタッフが関わったプロジェクト名一覧（縦方向）
-#
-#    Sheet7.tsv（本スクリプトの出力）
-#      1 列目: プロジェクト名（Sheet6 の A,B,C,... 列を縦に並べたもの）
-#      2 列目: スタッフコード
-#               └ 各スタッフの行すべてに同じスタッフコードを入れる
-#      3 列目: 合計工数時間（hh:mm:ss 形式、24 時間超も総時間数）
-#
-#    Sheet8.tsv（本スクリプトの出力）
-#      1 列目: 氏名
-#               └ 各スタッフの「最初の行」にだけ値を入れ、それ以外は空文字
-#      2 列目: プロジェクト名（Sheet7.tsv の 1 列目と同じ）
-#      3 列目: スタッフコード（Sheet7.tsv の 2 列目と同じ。全行に値あり）
-#      4 列目: 合計工数時間（Sheet7.tsv の 3 列目と同じ）
-#
-#    ※Sheet8.tsv の 2～4 列目は、Sheet7.tsv の 1～3 列目と同じ内容になる。
-#
-#    Sheet9.tsv（本スクリプトの出力）
-#      1 行目: 氏名, スタッフコード（ヘッダー）
-#      2 行目以降:
-#        ・氏名, スタッフコード
-#        ・同じスタッフコードは 1 回だけ出力する（重複なし）。
-#        ・Sheet6 のスタッフコード一覧と Sheet4 の「スタッフコード→氏名」の
-#          両方を元に、可能な限り「もれなく」一覧化する。
-#
-#  前提:
-#    ・Sheet4.tsv は、Excel の Sheet4 を .tsv 化したもの。
-#      ヘッダー行あり、区切りはタブ。
-#      エンコーディングは UTF-8(BOM付き) または cp932(Shift-JIS) のいずれか。
-#      少なくとも次の列が存在すること:
-#        - "スタッフコード"
-#        - "プロジェクト名"
-#        - "工数"
-#        - 氏名列（"姓 名" または "氏名" のいずれか）
-#
-#    ・Sheet4_staff_code_range.tsv は、Excel 上の
-#      「スタッフコード」「開始行」「終了行」の 3 列を
-#      そのまま .tsv 化したもの。
-#
-#      A列: スタッフコード
-#      B列: 開始行（Excel 行番号。=MATCH(A2, Sheet4!B:B, 0) の結果など）
-#      C列: 終了行（次のスタッフの開始行-1 等。ROW() 由来の Excel 行番号）
-#
-#      ※開始行・終了行は「Excel の行番号（1 始まり・ヘッダーを含む）」とする。
-#        Python 側では、ッダーを除いた DataFrame の行番号に変換して用いる。
-#
-#    ・Sheet6.tsv は、make_sheet6_from_sheet4.py によって作成された形式
-#      （1 行目: 通し番号, 2 行目: スタッフコード, 3 行目以降: プロジェクト名一覧）であること。
-#
-#  実行例:
-#    python make_sheet789_from_sheet4.py Sheet4.tsv Sheet4_staff_code_range.tsv Sheet6.tsv
-#
-#  出力:
-#    ・Sheet7.tsv（Sheet4.tsv と同じフォルダ）
-#    ・Sheet8.tsv（Sheet4.tsv と同じフォルダ）
-#    ・Sheet9.tsv（Sheet4.tsv と同じフォルダ）
-#
-# ///////////////////////////////////////////////////////////////
-
-import os
-import sys
-from typing import Dict, List, Tuple, Set
-
-import pandas as pd
-from pandas import DataFrame
-
-
-# ///////////////////////////////////////////////////////////////
-# ///////////////////////////////////////////////////////////////
-# //  TSV を UTF-8(BOM付き) 優先・cp932 併用で読み込む関数。
-# //  bHasHeader=True のときは 1 行目をヘッダーとして扱う。
-# //  bHasHeader=False のときはヘッダー無し（header=None）で読み込む。
-# ///////////////////////////////////////////////////////////////
-# ///////////////////////////////////////////////////////////////
-def read_tsv_with_encoding_candidates(
-    pszInputFileFullPath: str,
-    bHasHeader: bool,
-) -> DataFrame:
-    objEncodingCandidateList: List[str] = [
-        "utf-8-sig",
-        "cp932",
-    ]
-    bLoaded: bool = False
-    objLastDecodeError: Exception | None = None
-    objDataFrameResult: DataFrame | None = None
-
-    for pszEncoding in objEncodingCandidateList:
-        try:
-            if bHasHeader:
-                objDataFrameResult = pd.read_csv(
-                    pszInputFileFullPath,
-                    sep="\t",
-                    dtype=str,
-                    encoding=pszEncoding,
-                    engine="python",
-                )
-            else:
-                objDataFrameResult = pd.read_csv(
-                    pszInputFileFullPath,
-                    sep="\t",
-                    dtype=str,
-                    header=None,
-                    encoding=pszEncoding,
-                    engine="python",
-                )
-            bLoaded = True
-            break
-        except UnicodeDecodeError as objDecodeError:
-            objLastDecodeError = objDecodeError
+        objSingleOutputRows.append(objRow)
+
+    objCumulativeOutputRows: List[List[str]] = []
+    for objRow in objCumulativeRows:
+        pszName: str = objRow[0] if objRow else ""
+        if pszName == "合計" or pszName.startswith("C"):
             continue
+        objCumulativeOutputRows.append(objRow)
 
-    if not bLoaded or objDataFrameResult is None:
-        if objLastDecodeError is not None:
-            raise objLastDecodeError
-        raise UnicodeDecodeError(
-            "utf-8-sig",
-            b"",
-            0,
-            1,
-            "cannot decode TSV with utf-8-sig nor cp932",
+    pszSingleOutputPath: str = os.path.join(
+        pszDirectory,
+        "0001_PJサマリ_step0001_単月_損益計算書.tsv",
+    )
+    pszCumulativeOutputPath: str = os.path.join(
+        pszDirectory,
+        "0001_PJサマリ_step0001_累計_損益計算書.tsv",
+    )
+    write_tsv_rows(pszSingleOutputPath, objSingleOutputRows)
+    write_tsv_rows(pszCumulativeOutputPath, objCumulativeOutputRows)
+
+    pszSingleCostReportPath: str = os.path.join(
+        pszDirectory,
+        f"製造原価報告書_{iEndYear}年{pszEndMonth}月_A∪B_プロジェクト名_C∪D.tsv",
+    )
+    pszCumulativeCostReportPath: str = build_cumulative_file_path(
+        pszDirectory,
+        "製造原価報告書",
+        objStart,
+        objEnd,
+    )
+    if os.path.isfile(pszSingleCostReportPath):
+        objCostReportSingleRows: List[List[str]] = read_tsv_rows(pszSingleCostReportPath)
+        pszCostReportSingleOutputPath: str = os.path.join(
+            pszDirectory,
+            "0001_PJサマリ_step0001_単月_製造原価報告書.tsv",
+        )
+        write_tsv_rows(pszCostReportSingleOutputPath, objCostReportSingleRows)
+    if os.path.isfile(pszCumulativeCostReportPath):
+        objCostReportCumulativeRows: List[List[str]] = read_tsv_rows(pszCumulativeCostReportPath)
+        pszCostReportCumulativeOutputPath: str = os.path.join(
+            pszDirectory,
+            "0001_PJサマリ_step0001_累計_製造原価報告書.tsv",
+        )
+        write_tsv_rows(pszCostReportCumulativeOutputPath, objCostReportCumulativeRows)
+
+    objSingleOutputVerticalRows = transpose_rows(objSingleOutputRows)
+    pszSingleOutputVerticalPath: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0001_単月_損益計算書.tsv",
+    )
+    write_tsv_rows(pszSingleOutputVerticalPath, objSingleOutputVerticalRows)
+
+    objCumulativeOutputVerticalRows = transpose_rows(objCumulativeOutputRows)
+    pszCumulativeOutputVerticalPath: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0001_累計_損益計算書.tsv",
+    )
+    write_tsv_rows(pszCumulativeOutputVerticalPath, objCumulativeOutputVerticalRows)
+
+    if os.path.isfile(pszSingleCostReportPath):
+        pszCostReportSingleOutputPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0001_単月_製造原価報告書.tsv",
+        )
+        shutil.copy2(pszSingleCostReportPath, pszCostReportSingleOutputPath)
+    if os.path.isfile(pszCumulativeCostReportPath):
+        pszCostReportCumulativeOutputPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0001_累計_製造原価報告書.tsv",
+        )
+        shutil.copy2(pszCumulativeCostReportPath, pszCostReportCumulativeOutputPath)
+
+    #//
+    #// PJサマリの損益計算書部分の作成
+    #//
+    #// 科目名
+    #// 純売上高
+    #// 売上総利益
+    #// 配賦販管費
+    #// 1Cカンパニー販管費
+    #// 2Cカンパニー販管費
+    #// 3Cカンパニー販管費
+    #// 4Cカンパニー販管費
+    #// 事業開発カンパニー販管費
+    #// 営業利益
+    #//
+    objTargetNames: List[str] = [
+        "科目名",
+        "純売上高",
+        "売上総利益",
+        "配賦販管費",
+        "1Cカンパニー販管費",
+        "2Cカンパニー販管費",
+        "3Cカンパニー販管費",
+        "4Cカンパニー販管費",
+        "事業開発カンパニー販管費",
+        "工数",
+        "営業利益",
+    ]
+    objSingleStep0002Rows = filter_rows_by_names(
+        objSingleOutputVerticalRows,
+        objTargetNames,
+    )
+    objCumulativeStep0002Rows = filter_rows_by_names(
+        objCumulativeOutputVerticalRows,
+        objTargetNames,
+    )
+    pszSingleStep0002Path: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0002_単月_損益計算書.tsv",
+    )
+    pszCumulativeStep0002Path: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0002_累計_損益計算書.tsv",
+    )
+    write_tsv_rows(pszSingleStep0002Path, objSingleStep0002Rows)
+    write_tsv_rows(pszCumulativeStep0002Path, objCumulativeStep0002Rows)
+
+    if os.path.isfile(pszSingleCostReportPath):
+        pszCostReportSingleStep0002Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0002_単月_製造原価報告書.tsv",
+        )
+        shutil.copy2(pszSingleCostReportPath, pszCostReportSingleStep0002Path)
+        pszCostReportSingleStep0003Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0003_単月_製造原価報告書.tsv",
+        )
+        shutil.copy2(pszSingleCostReportPath, pszCostReportSingleStep0003Path)
+        pszCostReportSingleStep0004Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0004_単月_製造原価報告書.tsv",
+        )
+        shutil.copy2(pszCostReportSingleStep0003Path, pszCostReportSingleStep0004Path)
+        pszCostReportSingleStep0004VerticalPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0004_単月_製造原価報告書_vertical.tsv",
+        )
+        write_tsv_rows(
+            pszCostReportSingleStep0004VerticalPath,
+            transpose_rows(read_tsv_rows(pszCostReportSingleStep0004Path)),
+        )
+    if os.path.isfile(pszCumulativeCostReportPath):
+        pszCostReportCumulativeStep0002Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0002_累計_製造原価報告書.tsv",
+        )
+        shutil.copy2(pszCumulativeCostReportPath, pszCostReportCumulativeStep0002Path)
+        pszCostReportCumulativeStep0003Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0003_累計_製造原価報告書.tsv",
+        )
+        shutil.copy2(pszCumulativeCostReportPath, pszCostReportCumulativeStep0003Path)
+        pszCostReportCumulativeStep0004Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0004_累計_製造原価報告書.tsv",
+        )
+        shutil.copy2(pszCostReportCumulativeStep0003Path, pszCostReportCumulativeStep0004Path)
+        pszCostReportCumulativeStep0004VerticalPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0004_累計_製造原価報告書_vertical.tsv",
+        )
+        write_tsv_rows(
+            pszCostReportCumulativeStep0004VerticalPath,
+            transpose_rows(read_tsv_rows(pszCostReportCumulativeStep0004Path)),
         )
 
-    return objDataFrameResult
-
-
-# ---------------------------------------------------------------
-# 指定したパスにエラーTSVを書き込む（既存スタイル踏襲）
-# ---------------------------------------------------------------
-def write_error_tsv(
-    pszOutputFileFullPath: str,
-    pszErrorMessage: str,
-) -> None:
-    pszDirectory: str = os.path.dirname(pszOutputFileFullPath)
-    if len(pszDirectory) > 0:
-        os.makedirs(pszDirectory, exist_ok=True)
-
-    with open(pszOutputFileFullPath, "w", encoding="utf-8") as objFile:
-        objFile.write(pszErrorMessage + "\n")
-
-
-# ---------------------------------------------------------------
-# Sheet7.tsv の出力ファイルパスを構築
-# ---------------------------------------------------------------
-def build_output_file_full_path_for_sheet7(
-    pszSheet4FileFullPath: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszSheet4FileFullPath)
-    pszOutputBaseName: str = "Sheet7.tsv"
-    if len(pszDirectory) == 0:
-        return pszOutputBaseName
-    return os.path.join(pszDirectory, pszOutputBaseName)
-
-
-# ---------------------------------------------------------------
-# Sheet8.tsv の出力ファイルパスを構築
-# ---------------------------------------------------------------
-def build_output_file_full_path_for_sheet8(
-    pszSheet4FileFullPath: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszSheet4FileFullPath)
-    pszOutputBaseName: str = "Sheet8.tsv"
-    if len(pszDirectory) == 0:
-        return pszOutputBaseName
-    return os.path.join(pszDirectory, pszOutputBaseName)
-
-
-# ---------------------------------------------------------------
-# Sheet9.tsv の出力ファイルパスを構築
-# ---------------------------------------------------------------
-def build_output_file_full_path_for_sheet9(
-    pszSheet4FileFullPath: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszSheet4FileFullPath)
-    pszOutputBaseName: str = "Sheet9.tsv"
-    if len(pszDirectory) == 0:
-        return pszOutputBaseName
-    return os.path.join(pszDirectory, pszOutputBaseName)
-
-
-# ---------------------------------------------------------------
-# Sheet10.tsv の出力ファイルパスを構築
-# ---------------------------------------------------------------
-def build_output_file_full_path_for_sheet10(
-    pszSheet4FileFullPath: str,
-) -> str:
-    pszDirectory: str = os.path.dirname(pszSheet4FileFullPath)
-    pszOutputBaseName: str = "Sheet10.tsv"
-    if len(pszDirectory) == 0:
-        return pszOutputBaseName
-    return os.path.join(pszDirectory, pszOutputBaseName)
-
-
-# ///////////////////////////////////////////////////////////////
-# ///////////////////////////////////////////////////////////////
-# //  文字列の時間（hh:mm:ss または hh:mm）を「秒数(int)」に変換する関数。
-# //  不正な形式や空文字の場合は 0 秒として扱う。
-# ///////////////////////////////////////////////////////////////
-# ///////////////////////////////////////////////////////////////
-def convert_time_string_to_seconds(
-    pszTimeText: str,
-) -> int:
-    if pszTimeText is None:
-        return 0
-
-    pszWork: str = str(pszTimeText).strip()
-    if len(pszWork) == 0:
-        return 0
-
-    objParts: List[str] = pszWork.split(":")
-    try:
-        if len(objParts) == 3:
-            iHour: int = int(objParts[0])
-            iMinute: int = int(objParts[1])
-            iSecond: int = int(objParts[2])
-        elif len(objParts) == 2:
-            iHour: int = int(objParts[0])
-            iMinute: int = int(objParts[1])
-            iSecond: int = 0
-        else:
-            return 0
-    except ValueError:
-        return 0
-
-    iTotalSeconds: int = iHour * 3600 + iMinute * 60 + iSecond
-    return iTotalSeconds
-
-
-# ///////////////////////////////////////////////////////////////
-# ///////////////////////////////////////////////////////////////
-# //  秒数(int)を「hh:mm:ss」形式の文字列に変換する関数。
-# //  24 時間を超えても、そのまま総時間数として出力する。
-# ///////////////////////////////////////////////////////////////
-# ///////////////////////////////////////////////////////////////
-def convert_seconds_to_time_string(
-    iTotalSeconds: int,
-) -> str:
-    if iTotalSeconds <= 0:
-        return "0:00:00"
-
-    iHour: int = iTotalSeconds // 3600
-    iRemain: int = iTotalSeconds % 3600
-    iMinute: int = iRemain // 60
-    iSecond: int = iRemain % 60
-
-    pszTimeText: str = "{0}:{1:02d}:{2:02d}".format(iHour, iMinute, iSecond)
-    return pszTimeText
-
-
-# ---------------------------------------------------------------
-# Sheet4.tsv, Sheet4_staff_code_range.tsv, Sheet6.tsv から
-# Sheet7.tsv と Sheet8.tsv と Sheet9.tsv を作成する（Sheet6 主体アルゴリズム）
-# ---------------------------------------------------------------
-def make_sheet789_from_sheet4(
-    pszSheet4FileFullPath: str,
-    pszRangeFileFullPath: str,
-    pszSheet6FileFullPath: str,
-) -> None:
-
-    # 出力ファイルパス（エラー時もこのフォルダを基準にする）
-    pszSheet7FileFullPath: str = build_output_file_full_path_for_sheet7(pszSheet4FileFullPath)
-    pszSheet7ErrorFileFullPath: str = pszSheet7FileFullPath.replace(".tsv", "_error.tsv")
-    pszSheet8FileFullPath: str = build_output_file_full_path_for_sheet8(pszSheet4FileFullPath)
-    pszSheet8ErrorFileFullPath: str = pszSheet8FileFullPath.replace(".tsv", "_error.tsv")
-    pszSheet9FileFullPath: str = build_output_file_full_path_for_sheet9(pszSheet4FileFullPath)
-    pszSheet9ErrorFileFullPath: str = pszSheet9FileFullPath.replace(".tsv", "_error.tsv")
-    pszSheet10FileFullPath: str = build_output_file_full_path_for_sheet10(pszSheet4FileFullPath)
-    pszSheet10ErrorFileFullPath: str = pszSheet10FileFullPath.replace(".tsv", "_error.tsv")
-
-    # 入力ファイル存在チェック（Sheet4）
-    if not os.path.isfile(pszSheet4FileFullPath):
-        write_error_tsv(
-            pszSheet4FileFullPath.replace(".tsv", "_error.tsv"),
-            "Error: Sheet4 TSV file not found. Path = {0}".format(pszSheet4FileFullPath),
+    pszSingleStep0003Path: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0003_単月_損益計算書.tsv",
+    )
+    if os.path.isfile(pszSingleStep0002Path):
+        objSingleStep0002Rows = read_tsv_rows(pszSingleStep0002Path)
+        objSingleStep0003Rows = add_company_sg_admin_cost_total_row(objSingleStep0002Rows)
+        write_tsv_rows(pszSingleStep0003Path, objSingleStep0003Rows)
+        pszSingleStep0004Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0004_単月_損益計算書.tsv",
         )
-        return
-
-    # 入力ファイル存在チェック（Sheet4_staff_code_range）
-    if not os.path.isfile(pszRangeFileFullPath):
-        write_error_tsv(
-            pszRangeFileFullPath.replace(".tsv", "_error.tsv"),
-            "Error: Sheet4_staff_code_range TSV file not found. Path = {0}".format(pszRangeFileFullPath),
+        objSingleStep0004Rows = move_row_between(
+            objSingleStep0003Rows,
+            "カンパニー販管費",
+            "配賦販管費",
+            "営業利益",
         )
-        return
-
-    # 入力ファイル存在チェック（Sheet6）
-    if not os.path.isfile(pszSheet6FileFullPath):
-        write_error_tsv(
-            pszSheet6FileFullPath.replace(".tsv", "_error.tsv"),
-            "Error: Sheet6 TSV file not found. Path = {0}".format(pszSheet6FileFullPath),
+        # step0004の損益計算書として保存する
+        write_tsv_rows(pszSingleStep0004Path, objSingleStep0004Rows)
+        pszSingleStep0004VerticalPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0004_単月_損益計算書_vertical.tsv",
         )
-        return
+        write_tsv_rows(pszSingleStep0004VerticalPath, transpose_rows(objSingleStep0004Rows))
 
-    # -----------------------------------------------------------
-    # Sheet4.tsv 読み込み（UTF-8-sig → cp932 の順で試す）
-    # -----------------------------------------------------------
-    try:
-        objDataFrameSheet4: DataFrame = read_tsv_with_encoding_candidates(
-            pszSheet4FileFullPath,
-            True,
+    pszCumulativeStep0003Path: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0003_累計_損益計算書.tsv",
+    )
+    if os.path.isfile(pszCumulativeStep0002Path):
+        objCumulativeStep0002Rows = read_tsv_rows(pszCumulativeStep0002Path)
+        objCumulativeStep0003Rows = add_company_sg_admin_cost_total_row(objCumulativeStep0002Rows)
+        write_tsv_rows(pszCumulativeStep0003Path, objCumulativeStep0003Rows)
+        pszCumulativeStep0004Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0004_累計_損益計算書.tsv",
         )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: unexpected exception while reading Sheet4 TSV. Detail = {0}".format(objException),
+        objCumulativeStep0004Rows = move_row_between(
+            objCumulativeStep0003Rows,
+            "カンパニー販管費",
+            "配賦販管費",
+            "営業利益",
         )
-        return
+        # step0004の損益計算書として保存する
+        write_tsv_rows(pszCumulativeStep0004Path, objCumulativeStep0004Rows)
+        pszCumulativeStep0004VerticalPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0004_累計_損益計算書_vertical.tsv",
+        )
+        write_tsv_rows(
+            pszCumulativeStep0004VerticalPath,
+            transpose_rows(objCumulativeStep0004Rows),
+        )
 
-    objSheet4Columns: List[str] = list(objDataFrameSheet4.columns)
-    if (
-        ("スタッフコード" not in objSheet4Columns)
-        or ("プロジェクト名" not in objSheet4Columns)
-        or ("工数" not in objSheet4Columns)
+    pszSingleCostStep0004VerticalPath: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0004_単月_製造原価報告書_vertical.tsv",
+    )
+    pszSinglePlStep0004VerticalPath: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0004_単月_損益計算書_vertical.tsv",
+    )
+    if os.path.isfile(pszSingleCostStep0004VerticalPath) and os.path.isfile(
+        pszSinglePlStep0004VerticalPath
     ):
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: required columns not found in Sheet4 TSV. "
-            "Required columns: スタッフコード, プロジェクト名, 工数. "
-            "Columns = {0}".format(", ".join(objSheet4Columns)),
+        objSingleCostStep0004Rows = read_tsv_rows(pszSingleCostStep0004VerticalPath)
+        objSinglePlStep0004Rows = read_tsv_rows(pszSinglePlStep0004VerticalPath)
+        objAlignedCostRows, objAlignedPlRows = align_vertical_rows_for_union(
+            objSingleCostStep0004Rows,
+            objSinglePlStep0004Rows,
         )
+        pszSingleCostStep0005VerticalPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0005_単月_製造原価報告書_E∪F_vertical.tsv",
+        )
+        pszSinglePlStep0005VerticalPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0005_単月_損益計算書_E∪F_vertical.tsv",
+        )
+        write_tsv_rows(pszSingleCostStep0005VerticalPath, objAlignedCostRows)
+        write_tsv_rows(pszSinglePlStep0005VerticalPath, objAlignedPlRows)
+        pszSingleCostStep0005Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0005_単月_製造原価報告書_E∪F.tsv",
+        )
+        pszSinglePlStep0005Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0005_単月_損益計算書_E∪F.tsv",
+        )
+        write_tsv_rows(pszSingleCostStep0005Path, transpose_rows(objAlignedCostRows))
+        write_tsv_rows(pszSinglePlStep0005Path, transpose_rows(objAlignedPlRows))
+        pszSingleCostStep0006Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0006_単月_製造原価報告書_E∪F.tsv",
+        )
+        pszSinglePlStep0006Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0006_単月_損益計算書_E∪F.tsv",
+        )
+        shutil.copy2(pszSingleCostStep0005Path, pszSingleCostStep0006Path)
+        objSingleStep0006Rows = insert_per_hour_rows(read_tsv_rows(pszSinglePlStep0005Path))
+        write_tsv_rows(pszSinglePlStep0006Path, objSingleStep0006Rows)
+
+    pszCumulativeCostStep0004VerticalPath: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0004_累計_製造原価報告書_vertical.tsv",
+    )
+    pszCumulativePlStep0004VerticalPath: str = os.path.join(
+        pszDirectory,
+        "0003_PJサマリ_step0004_累計_損益計算書_vertical.tsv",
+    )
+    if os.path.isfile(pszCumulativeCostStep0004VerticalPath) and os.path.isfile(
+        pszCumulativePlStep0004VerticalPath
+    ):
+        objCumulativeCostStep0004Rows = read_tsv_rows(pszCumulativeCostStep0004VerticalPath)
+        objCumulativePlStep0004Rows = read_tsv_rows(pszCumulativePlStep0004VerticalPath)
+        objAlignedCostRows, objAlignedPlRows = align_vertical_rows_for_union(
+            objCumulativeCostStep0004Rows,
+            objCumulativePlStep0004Rows,
+        )
+        pszCumulativeCostStep0005VerticalPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0005_累計_製造原価報告書_E∪F_vertical.tsv",
+        )
+        pszCumulativePlStep0005VerticalPath: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0005_累計_損益計算書_E∪F_vertical.tsv",
+        )
+        write_tsv_rows(pszCumulativeCostStep0005VerticalPath, objAlignedCostRows)
+        write_tsv_rows(pszCumulativePlStep0005VerticalPath, objAlignedPlRows)
+        pszCumulativeCostStep0005Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0005_累計_製造原価報告書_E∪F.tsv",
+        )
+        pszCumulativePlStep0005Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0005_累計_損益計算書_E∪F.tsv",
+        )
+        write_tsv_rows(pszCumulativeCostStep0005Path, transpose_rows(objAlignedCostRows))
+        write_tsv_rows(pszCumulativePlStep0005Path, transpose_rows(objAlignedPlRows))
+        pszCumulativeCostStep0006Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0006_累計_製造原価報告書_E∪F.tsv",
+        )
+        pszCumulativePlStep0006Path: str = os.path.join(
+            pszDirectory,
+            "0003_PJサマリ_step0006_累計_損益計算書_E∪F.tsv",
+        )
+        shutil.copy2(pszCumulativeCostStep0005Path, pszCumulativeCostStep0006Path)
+        objCumulativeStep0006Rows = insert_per_hour_rows(
+            read_tsv_rows(pszCumulativePlStep0005Path)
+        )
+        write_tsv_rows(pszCumulativePlStep0006Path, objCumulativeStep0006Rows)
+
+    create_step0007_pl_cr(pszDirectory)
+
+    objTargetColumns: List[str] = [
+        "科目名",
+        "純売上高",
+        "売上原価",
+        "売上総利益",
+        "配賦販管費",
+    ]
+    objSingleStep0002Rows: List[List[str]] = filter_rows_by_columns(
+        objSingleOutputRows,
+        objTargetColumns,
+    )
+    objCumulativeStep0002Rows: List[List[str]] = filter_rows_by_columns(
+        objCumulativeOutputRows,
+        objTargetColumns,
+    )
+    pszSingleStep0002Path: str = os.path.join(
+        pszDirectory,
+        "0001_PJサマリ_step0002_単月_損益計算書.tsv",
+    )
+    pszCumulativeStep0002Path: str = os.path.join(
+        pszDirectory,
+        "0001_PJサマリ_step0002_累計_損益計算書.tsv",
+    )
+    write_tsv_rows(pszSingleStep0002Path, objSingleStep0002Rows)
+    write_tsv_rows(pszCumulativeStep0002Path, objCumulativeStep0002Rows)
+
+    objSingleStep0003Rows: List[List[str]] = append_gross_margin_column(objSingleStep0002Rows)
+    objCumulativeStep0003Rows: List[List[str]] = append_gross_margin_column(
+        objCumulativeStep0002Rows
+    )
+    pszSingleStep0003Path: str = os.path.join(
+        pszDirectory,
+        "0001_PJサマリ_step0007_単月_損益計算書.tsv",
+    )
+    pszCumulativeStep0003Path: str = os.path.join(
+        pszDirectory,
+        "0001_PJサマリ_step0007_累計_損益計算書.tsv",
+    )
+    write_tsv_rows(pszSingleStep0003Path, objSingleStep0003Rows)
+    write_tsv_rows(pszCumulativeStep0003Path, objCumulativeStep0003Rows)
+
+    if len(objSingleStep0003Rows) != len(objCumulativeStep0003Rows):
+        print("Error: step0007 row count mismatch between single and cumulative.")
         return
 
-    # 氏名列の候補を探す（"姓 名" または "氏名"）
-    pszNameColumn: str = ""
-    if "姓 名" in objSheet4Columns:
-        pszNameColumn = "姓 名"
-    elif "氏名" in objSheet4Columns:
-        pszNameColumn = "氏名"
-
-    # 計上カンパニー列の候補を探す（旧: 所属グループ名）
-    pszCompanyColumn: str = ""
-    if "計上カンパニー名" in objSheet4Columns:
-        pszCompanyColumn = "計上カンパニー名"
-    elif "計上カンパニー" in objSheet4Columns:
-        pszCompanyColumn = "計上カンパニー"
-    elif "所属グループ名" in objSheet4Columns:
-        pszCompanyColumn = "所属グループ名"
-    elif "所属グループ" in objSheet4Columns:
-        pszCompanyColumn = "所属グループ"
-
-    # 工数列を秒数に変した補助列を追加
-    try:
-        objDataFrameSheet4 = objDataFrameSheet4.copy()
-        objDataFrameSheet4["__time_seconds__"] = objDataFrameSheet4["工数"].apply(
-            lambda pszValue: convert_time_string_to_seconds(pszValue),
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: unexpected exception while converting time text to seconds. Detail = {0}".format(objException),
-        )
-        return
-
-    iSheet4RowCount: int = objDataFrameSheet4.shape[0]
-
-    # -----------------------------------------------------------
-    # Sheet4_staff_code_range.tsv 読み込み
-    #   → スタッフコード → (開始インデックス, 終了インデックス) の辞書を作る
-    # -----------------------------------------------------------
-    try:
-        objDataFrameRange: DataFrame = read_tsv_with_encoding_candidates(
-            pszRangeFileFullPath,
-            True,
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: unexpected exception while reading Sheet4_staff_code_range TSV. Detail = {0}".format(
-                objException,
-            ),
-        )
-        return
-
-    if objDataFrameRange.shape[1] < 3:
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: Sheet4_staff_code_range TSV must have at least 3 columns (staff_code, start_row, end_row).",
-        )
-        return
-
-    try:
-        objDataFrameRange = objDataFrameRange.copy()
-        objDataFrameRange["__start_row_excel__"] = pd.to_numeric(
-            objDataFrameRange.iloc[:, 1], errors="coerce"
-        )
-        objDataFrameRange["__end_row_excel__"] = pd.to_numeric(
-            objDataFrameRange.iloc[:, 2], errors="coerce"
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: unexpected exception while converting start/end rows to numeric. Detail = {0}".format(
-                objException,
-            ),
-        )
-        return
-
-    if objDataFrameRange["__start_row_excel__"].isna().any() or objDataFrameRange["__end_row_excel__"].isna().any():
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: start_row or end_row contains non-numeric value in Sheet4_staff_code_range TSV.",
-        )
-        return
-
-    # スタッフコード → (開始Index, 終了Index) の辞書を構築
-    objDictStaffCodeToRange: Dict[str, Tuple[int, int]] = {}
-    for iIndex, objRow in objDataFrameRange.iterrows():
-        pszStaffCodeRange: str = str(objRow.iloc[0]).strip()
-        if len(pszStaffCodeRange) == 0:
-            continue
-
-        iStartRowExcel: int = int(objRow["__start_row_excel__"])
-        iEndRowExcel: int = int(objRow["__end_row_excel__"])
-
-        iStartIndex: int = iStartRowExcel - 2  # 1 行目: ヘッダー, 2 行目: index 0
-        iEndIndex: int = iEndRowExcel - 2
-
-        if (iStartIndex < 0) or (iEndIndex < 0) or (iStartIndex > iEndIndex) or (iEndIndex >= iSheet4RowCount):
-            write_error_tsv(
-                pszSheet7ErrorFileFullPath,
-                "Error: invalid row range for staff code {0}. "
-                "StartExcel={1}, EndExcel={2}, StartIndex={3}, EndIndex={4}, Sheet4RowCount={5}".format(
-                    pszStaffCodeRange,
-                    iStartRowExcel,
-                    iEndRowExcel,
-                    iStartIndex,
-                    iEndIndex,
-                    iSheet4RowCount,
-                ),
+    for iRowIndex, objRow in enumerate(objSingleStep0003Rows):
+        pszSingleKey: str = objRow[0] if objRow else ""
+        objCumulativeRow: List[str] = objCumulativeStep0003Rows[iRowIndex]
+        pszCumulativeKey: str = objCumulativeRow[0] if objCumulativeRow else ""
+        if pszSingleKey != pszCumulativeKey:
+            print(
+                "Error: step0007 first-column mismatch at row "
+                + str(iRowIndex)
+                + ". single="
+                + pszSingleKey
+                + " cumulative="
+                + pszCumulativeKey
             )
             return
 
-        # 同じスタッフコードが複数行に出てきた場合は最初のものを優先
-        if pszStaffCodeRange not in objDictStaffCodeToRange:
-            objDictStaffCodeToRange[pszStaffCodeRange] = (iStartIndex, iEndIndex)
+    objStep0004Rows: List[List[str]] = []
+    for iRowIndex, objRow in enumerate(objSingleStep0003Rows):
+        objCumulativeRow = objCumulativeStep0003Rows[iRowIndex]
+        if iRowIndex == 0:
+            objHeader: List[str] = [objRow[0] if objRow else ""]
+            iMaxColumns: int = max(len(objRow), len(objCumulativeRow))
+            for iColumnIndex in range(1, iMaxColumns):
+                pszSingleHeader: str = objRow[iColumnIndex] if iColumnIndex < len(objRow) else ""
+                pszCumulativeHeader: str = (
+                    objCumulativeRow[iColumnIndex] if iColumnIndex < len(objCumulativeRow) else ""
+                )
+                objHeader.append(pszSingleHeader)
+                objHeader.append(pszCumulativeHeader)
+            objStep0004Rows.append(objHeader)
+            continue
 
-    # -----------------------------------------------------------
-    # Sheet4 から「スタッフコード → 氏名」の辞書を作る（あれば）
-    # -----------------------------------------------------------
-    objDictStaffCodeToName: Dict[str, str] = {}
-    if pszNameColumn != "":
-        for iIndex, objRow in objDataFrameSheet4.iterrows():
-            pszStaffCodeFromSheet4: str = str(objRow["スタッフコード"]).strip()
-            if len(pszStaffCodeFromSheet4) == 0:
-                continue
-            pszStaffName: str = str(objRow[pszNameColumn]).strip()
-            if pszStaffCodeFromSheet4 not in objDictStaffCodeToName:
-                objDictStaffCodeToName[pszStaffCodeFromSheet4] = pszStaffName
+        objOutputRow: List[str] = [objRow[0] if objRow else ""]
+        iMaxColumns = max(len(objRow), len(objCumulativeRow))
+        for iColumnIndex in range(1, iMaxColumns):
+            objOutputRow.append(objRow[iColumnIndex] if iColumnIndex < len(objRow) else "")
+            objOutputRow.append(
+                objCumulativeRow[iColumnIndex] if iColumnIndex < len(objCumulativeRow) else ""
+            )
+        objStep0004Rows.append(objOutputRow)
 
-    # -----------------------------------------------------------
-    # Sheet6.tsv 読み込み（スタッフコード順・プロジェクト一覧を利用）
-    # -----------------------------------------------------------
-    try:
-        # ヘッダー行なしとして読み込む（1 行目〜をそのまま扱う）
-        objDataFrameSheet6: DataFrame = read_tsv_with_encoding_candidates(
-            pszSheet6FileFullPath,
-            False,
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: unexpected exception while reading Sheet6 TSV. Detail = {0}".format(objException),
-        )
+    pszStep0004Path: str = os.path.join(
+        pszDirectory,
+        "0001_PJサマリ_step0008_単月・累計_損益計算書.tsv",
+    )
+    write_tsv_rows(pszStep0004Path, objStep0004Rows)
+
+    if not objStep0004Rows:
         return
 
-    if objDataFrameSheet6.shape[0] < 2:
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: Sheet6 TSV must have at least 2 rows (1st: index, 2nd: staff_code).",
-        )
-        return
-
-    iSheet6RowCount: int = objDataFrameSheet6.shape[0]
-    iSheet6ColumnCount: int = objDataFrameSheet6.shape[1]
-
-    # 2 行目(インデックス 1) のスタッフコード一覧を取得
-    objListStaffCodeFromSheet6: List[str] = []
-    for iColumnIndex in range(iSheet6ColumnCount):
-        pszStaffCodeFromSheet6: str = ""
-        objValue = objDataFrameSheet6.iat[1, iColumnIndex]
-        if objValue is not None:
-            pszStaffCodeFromSheet6 = str(objValue).strip()
-        if len(pszStaffCodeFromSheet6) == 0:
-            # 空列はスキップ
-            continue
-        objListStaffCodeFromSheet6.append(pszStaffCodeFromSheet6)
-
-    # -----------------------------------------------------------
-    # Sheet7 / Sheet8 / Sheet9 の出力行リストを構築
-    # -----------------------------------------------------------
-    objListOutputRowsSheet7: List[List[str]] = []
-    objListOutputRowsSheet8: List[List[str]] = []
-    objListOutputRowsSheet9: List[List[str]] = []
-    objListOutputRowsSheet10: List[List[str]] = []
-
-    # Sheet9 用: スタッフコード一覧を元に「氏名・スタッフコード」を作成
-    objSetAddedStaffCodeForSheet9: Set[str] = set()
-
-    for pszStaffCodeForSheet9 in objListStaffCodeFromSheet6:
-        pszStaffNameForSheet9: str = objDictStaffCodeToName.get(pszStaffCodeForSheet9, "")
-        objListOutputRowsSheet9.append(
-            [pszStaffNameForSheet9, pszStaffCodeForSheet9],
-        )
-        objSetAddedStaffCodeForSheet9.add(pszStaffCodeForSheet9)
-
-    # Sheet4 由来のスタッフコードで、Sheet6 に無いものがあれば末尾に追加
-    for pszStaffCodeExtra, pszStaffNameExtra in objDictStaffCodeToName.items():
-        if pszStaffCodeExtra in objSetAddedStaffCodeForSheet9:
-            continue
-        objListOutputRowsSheet9.append(
-            [pszStaffNameExtra, pszStaffCodeExtra],
-        )
-        objSetAddedStaffCodeForSheet9.add(pszStaffCodeExtra)
-
-    # スタッフコードを Sheet6 の並び順でループ（Sheet7 / Sheet8 用）
-    for pszStaffCode in objListStaffCodeFromSheet6:
-        # 該当スタッフの行範囲（Sheet4）を辞書から取得
-        if pszStaffCode in objDictStaffCodeToRange:
-            iStartIndex, iEndIndex = objDictStaffCodeToRange[pszStaffCode]
-            objDataFrameSubStaff: DataFrame = objDataFrameSheet4.iloc[iStartIndex : iEndIndex + 1]
-            objDataFrameSubStaff = objDataFrameSubStaff[objDataFrameSubStaff["スタッフコード"] == pszStaffCode]
+    iStep0004ColumnCount: int = max(len(objRow) for objRow in objStep0004Rows)
+    objStep0005Rows: List[List[str]] = []
+    objHeaderRow: List[str] = ["単／累"]
+    for iColumnIndex in range(1, iStep0004ColumnCount):
+        if iColumnIndex % 2 == 1:
+            objHeaderRow.append("単月")
         else:
-            # 念のため、辞書に無い場合はSheet4全体からフィルタ
-            objDataFrameSubStaff = objDataFrameSheet4[
-                objDataFrameSheet4["スタッフコード"] == pszStaffCode
-            ]
+            objHeaderRow.append("累計")
+    objStep0005Rows.append(objHeaderRow)
+    objStep0005Rows.extend(objStep0004Rows)
 
-        if objDataFrameSubStaff.empty:
-            # 該当スタッフの工数データが無ければスキップ
-            continue
+    pszStep0005Path: str = os.path.join(
+        pszDirectory,
+        "0001_PJサマリ_step0009_単月・累計_損益計算書.tsv",
+    )
+    write_tsv_rows(pszStep0005Path, objStep0005Rows)
 
-        pszStaffNameForSheet8: str = objDictStaffCodeToName.get(pszStaffCode, "")
-        iRowIndexWithinStaff: int = 0
+    objGrossProfitColumns: List[str] = ["科目名", "売上総利益", "純売上高"]
+    objGrossProfitSingleRows: List[List[str]] = filter_rows_by_columns(
+        objSingleOutputRows,
+        objGrossProfitColumns,
+    )
+    objGrossProfitCumulativeRows: List[List[str]] = filter_rows_by_columns(
+        objCumulativeOutputRows,
+        objGrossProfitColumns,
+    )
+    pszGrossProfitSinglePath: str = os.path.join(
+        pszDirectory,
+        "0002_PJサマリ_step0001_単月_粗利金額ランキング.tsv",
+    )
+    pszGrossProfitCumulativePath: str = os.path.join(
+        pszDirectory,
+        "0002_PJサマリ_step0001_累計_粗利金額ランキング.tsv",
+    )
+    write_tsv_rows(pszGrossProfitSinglePath, objGrossProfitSingleRows)
+    write_tsv_rows(pszGrossProfitCumulativePath, objGrossProfitCumulativeRows)
 
-        # Sheet6 の列からプロジェクト名一覧を縦方向に取得
-        #  1 行目: 通し番号
-        #  2 行目: スタッフコード
-        #  3 行目以降: プロジェクト名
-        #
-        # ここでは、全行を走査し、指定したスタッフコードの列だけを見る。
-        for iColumnIndex in range(iSheet6ColumnCount):
-            objValueStaffCodeAtColumn = objDataFrameSheet6.iat[1, iColumnIndex]
-            pszStaffCodeAtColumn: str = ""
-            if objValueStaffCodeAtColumn is not None:
-                pszStaffCodeAtColumn = str(objValueStaffCodeAtColumn).strip()
-            if pszStaffCodeAtColumn != pszStaffCode:
-                # この列は別のスタッフなのでスキップ
+    # 単月_粗利金額ランキング
+    objGrossProfitSingleSortedRows: List[List[str]] = []
+    objGrossProfitCumulativeSortedRows: List[List[str]] = []
+
+    if objGrossProfitSingleRows:
+        objSingleHeader: List[str] = objGrossProfitSingleRows[0]
+        objSingleBody: List[List[str]] = objGrossProfitSingleRows[1:]
+        objSingleBody.sort(
+            key=lambda objRow: try_parse_float(objRow[1] if len(objRow) > 1 else "") or 0.0,
+            reverse=True,
+        )
+        objGrossProfitSingleSortedRows = [objSingleHeader] + objSingleBody
+        pszGrossProfitSingleSortedPath: str = os.path.join(
+            pszDirectory,
+            "0002_PJサマリ_step0002_単月_粗利金額ランキング.tsv",
+        )
+        write_tsv_rows(pszGrossProfitSingleSortedPath, objGrossProfitSingleSortedRows)
+
+    # 累計_粗利金額ランキング
+    if objGrossProfitCumulativeRows:
+        objCumulativeHeader: List[str] = objGrossProfitCumulativeRows[0]
+        objCumulativeBody: List[List[str]] = objGrossProfitCumulativeRows[1:]
+        objCumulativeBody.sort(
+            key=lambda objRow: try_parse_float(objRow[1] if len(objRow) > 1 else "") or 0.0,
+            reverse=True,
+        )
+        objGrossProfitCumulativeSortedRows = [objCumulativeHeader] + objCumulativeBody
+        pszGrossProfitCumulativeSortedPath: str = os.path.join(
+            pszDirectory,
+            "0002_PJサマリ_step0002_累計_粗利金額ランキング.tsv",
+        )
+        write_tsv_rows(
+            pszGrossProfitCumulativeSortedPath,
+            objGrossProfitCumulativeSortedRows,
+        )
+
+    if objGrossProfitSingleSortedRows and objGrossProfitCumulativeSortedRows:
+        if len(objGrossProfitSingleSortedRows) != len(objGrossProfitCumulativeSortedRows):
+            print("Error: gross profit ranking row count mismatch.")
+            return
+
+        objGrossProfitCombinedRows = [list(objRow) for objRow in objGrossProfitSingleSortedRows]
+        for objRow in objGrossProfitCombinedRows:
+            objRow.append("")
+
+        for iRowIndex, objCumulativeRow in enumerate(objGrossProfitCumulativeSortedRows):
+            if len(objGrossProfitCombinedRows[iRowIndex]) < 3:
+                objGrossProfitCombinedRows[iRowIndex].extend(
+                    [""] * (3 - len(objGrossProfitCombinedRows[iRowIndex]))
+                )
+            pszCumulativeProject: str = objCumulativeRow[0] if objCumulativeRow else ""
+            pszCumulativeValue: str = objCumulativeRow[1] if len(objCumulativeRow) > 1 else ""
+            objGrossProfitCombinedRows[iRowIndex].append(pszCumulativeProject)
+            objGrossProfitCombinedRows[iRowIndex].append(pszCumulativeValue)
+
+        pszGrossProfitCombinedPath: str = os.path.join(
+            pszDirectory,
+            "0002_PJサマリ_step0007_単月・累計_粗利金額ランキング.tsv",
+        )
+        write_tsv_rows(pszGrossProfitCombinedPath, objGrossProfitCombinedRows)
+
+    if objGrossProfitSingleSortedRows:
+        objGrossProfitSingleRankRows: List[List[str]] = []
+        for iRowIndex, objRow in enumerate(objGrossProfitSingleSortedRows):
+            if iRowIndex == 0:
+                objGrossProfitSingleRankRows.append(
+                    ["0", "プロジェクト名", "売上総利益", "純売上高", "利益率"]
+                )
                 continue
-
-            # この列が対象スタッフの列
-            for iRowIndex in range(2, iSheet6RowCount):
-                objValueProject = objDataFrameSheet6.iat[iRowIndex, iColumnIndex]
-                pszProjectNameFromSheet6: str = ""
-                if objValueProject is not None:
-                    pszProjectNameFromSheet6 = str(objValueProject).strip()
-                if len(pszProjectNameFromSheet6) == 0:
-                    # 空セル（これ以降も空の可能性が高いが、全行チェックでも問題なし）
-                    continue
-
-                # このスタッフ・このプロジェクトについて、工数秒数を合計
-                objDataFrameSubProject: DataFrame = objDataFrameSubStaff[
-                    objDataFrameSubStaff["プロジェクト名"] == pszProjectNameFromSheet6
-                ]
-
-                if objDataFrameSubProject.empty:
-                    # データ不整合で Sheet6 にだけプロジェクト名が存在する場合はスキップ
-                    continue
-
-                # __time_seconds__ を合計
-                try:
-                    iTotalSeconds: int = int(objDataFrameSubProject["__time_seconds__"].sum())
-                except Exception:
-                    iTotalSeconds = 0
-
-                pszTimeTotal: str = convert_seconds_to_time_string(iTotalSeconds)
-                pszCompanyName: str = ""
-                if pszCompanyColumn != "":
-                    try:
-                        objCompanySeries = objDataFrameSubProject[pszCompanyColumn].dropna()
-                        if not objCompanySeries.empty:
-                            pszCompanyName = str(objCompanySeries.iloc[0])
-                    except Exception:
-                        pszCompanyName = ""
-
-                # スタッフコードは各行すべてに出力
-                pszStaffCodeForRow: str = pszStaffCode
-                # 氏名はスタッフの最初の行だけ出力
-                if iRowIndexWithinStaff == 0:
-                    pszStaffNameForRow: str = pszStaffNameForSheet8
+            pszGrossProfit: str = objRow[1] if len(objRow) > 1 else ""
+            pszSales: str = objRow[2] if len(objRow) > 2 else ""
+            fGrossProfit: float = parse_number(pszGrossProfit)
+            fSales: float = parse_number(pszSales)
+            if abs(fSales) < 0.0000001:
+                if fGrossProfit > 0:
+                    pszMargin = "'＋∞"
+                elif fGrossProfit < 0:
+                    pszMargin = "'－∞"
                 else:
-                    pszStaffNameForRow = ""
+                    pszMargin = "0"
+            else:
+                pszMargin = format_number(fGrossProfit / fSales)
+            objGrossProfitSingleRankRows.append(
+                [
+                    str(iRowIndex),
+                    objRow[0] if objRow else "",
+                    pszGrossProfit,
+                    pszSales,
+                    pszMargin,
+                ]
+            )
+        pszGrossProfitSingleRankPath: str = os.path.join(
+            pszDirectory,
+            "0002_PJサマリ_step0007_単月_粗利金額ランキング.tsv",
+        )
+        write_tsv_rows(pszGrossProfitSingleRankPath, objGrossProfitSingleRankRows)
 
-                # Sheet7 用の 1 行
-                objListOutputRowsSheet7.append(
-                    [pszProjectNameFromSheet6, pszStaffCodeForRow, pszTimeTotal],
+    if objGrossProfitCumulativeSortedRows:
+        objGrossProfitCumulativeRankRows: List[List[str]] = []
+        for iRowIndex, objRow in enumerate(objGrossProfitCumulativeSortedRows):
+            if iRowIndex == 0:
+                objGrossProfitCumulativeRankRows.append(
+                    ["0", "プロジェクト名", "売上総利益", "純売上高", "利益率"]
                 )
+                continue
+            pszGrossProfit = objRow[1] if len(objRow) > 1 else ""
+            pszSales = objRow[2] if len(objRow) > 2 else ""
+            fGrossProfit = parse_number(pszGrossProfit)
+            fSales = parse_number(pszSales)
+            if abs(fSales) < 0.0000001:
+                if fGrossProfit > 0:
+                    pszMargin = "'＋∞"
+                elif fGrossProfit < 0:
+                    pszMargin = "'－∞"
+                else:
+                    pszMargin = "0"
+            else:
+                pszMargin = format_number(fGrossProfit / fSales)
+            objGrossProfitCumulativeRankRows.append(
+                [
+                    str(iRowIndex),
+                    objRow[0] if objRow else "",
+                    pszGrossProfit,
+                    pszSales,
+                    pszMargin,
+                ]
+            )
+        pszGrossProfitCumulativeRankPath: str = os.path.join(
+            pszDirectory,
+            "0002_PJサマリ_step0007_累計_粗利金額ランキング.tsv",
+        )
+        write_tsv_rows(pszGrossProfitCumulativeRankPath, objGrossProfitCumulativeRankRows)
 
-                # Sheet8 用の 1 行（Sheet7 の前に氏名列を追加）
-                objListOutputRowsSheet8.append(
-                    [pszStaffNameForRow, pszProjectNameFromSheet6, pszStaffCodeForRow, pszTimeTotal],
-                )
+    if objGrossProfitSingleRankRows and objGrossProfitCumulativeRankRows:
+        if len(objGrossProfitSingleRankRows) != len(objGrossProfitCumulativeRankRows):
+            print("Error: gross profit ranking step0008 row count mismatch.")
+            return
 
-                # Sheet10 用の 1 行（計上カンパニー列を追加）
-                objListOutputRowsSheet10.append(
-                    [pszProjectNameFromSheet6, pszCompanyName, pszStaffCodeForRow, pszTimeTotal],
-                )
+        objGrossProfitStep0004Rows: List[List[str]] = []
+        for iRowIndex, objSingleRow in enumerate(objGrossProfitSingleRankRows):
+            objCumulativeRow = objGrossProfitCumulativeRankRows[iRowIndex]
+            objOutputRow: List[str] = list(objSingleRow)
+            objOutputRow.append("")
+            objOutputRow.extend(objCumulativeRow)
+            objGrossProfitStep0004Rows.append(objOutputRow)
 
-                iRowIndexWithinStaff += 1
+        pszGrossProfitStep0004Path: str = os.path.join(
+            pszDirectory,
+            "0002_PJサマリ_step0008_単月・累計_粗利金額ランキング.tsv",
+        )
+        write_tsv_rows(pszGrossProfitStep0004Path, objGrossProfitStep0004Rows)
 
-            # 同じスタッフコードの列は 1 列だけの想定なので break
+        objGrossProfitStep0005Rows: List[List[str]] = [
+            [
+                "",
+                "粗利金額ランキング",
+                "粗利金額",
+                "",
+                "単月",
+                "",
+                "",
+                "粗利金額ランキング",
+                "粗利金額",
+                "",
+                "累計",
+            ]
+        ]
+        objGrossProfitStep0005Rows.extend(objGrossProfitStep0004Rows)
+        pszGrossProfitStep0005Path: str = os.path.join(
+            pszDirectory,
+            "0002_PJサマリ_step0009_単月・累計_粗利金額ランキング.tsv",
+        )
+        write_tsv_rows(pszGrossProfitStep0005Path, objGrossProfitStep0005Rows)
+
+        if objGrossProfitStep0005Rows:
+            objGrossProfitStep0006Rows: List[List[str]] = []
+            objSalesIndices: List[int] = []
+            objNumberColumnIndices: List[int] = []
+            objHeaderRow: List[str] = objGrossProfitStep0005Rows[0]
+            for iColumnIndex, pszColumnName in enumerate(objHeaderRow):
+                if pszColumnName == "純売上高":
+                    objSalesIndices.append(iColumnIndex)
+
+            if objGrossProfitSingleRankRows:
+                iSingleColumnCount = len(objGrossProfitSingleRankRows[0])
+                objNumberColumnIndices = [0, iSingleColumnCount + 1]
+
+            objSalesIndexSet = set(objSalesIndices)
+            objNumberIndexSet = set(objNumberColumnIndices)
+            for objRow in objGrossProfitStep0005Rows:
+                objFilteredRow: List[str] = []
+                for iColumnIndex, pszValue in enumerate(objRow):
+                    if iColumnIndex in objSalesIndexSet:
+                        continue
+                    if iColumnIndex in objNumberIndexSet and pszValue == "0":
+                        objFilteredRow.append("")
+                    else:
+                        objFilteredRow.append(pszValue)
+                objGrossProfitStep0006Rows.append(objFilteredRow)
+
+            pszGrossProfitStep0006Path: str = os.path.join(
+                pszDirectory,
+                "0002_PJサマリ_step0010_単月・累計_粗利金額ランキング.tsv",
+            )
+            write_tsv_rows(pszGrossProfitStep0006Path, objGrossProfitStep0006Rows)
+
+            pszGrossProfitFinalPath: str = os.path.join(
+                pszDirectory,
+                "0002_PJサマリ_単月・累計_粗利金額ランキング.tsv",
+            )
+            write_tsv_rows(pszGrossProfitFinalPath, objGrossProfitStep0006Rows)
+
+
+def create_cumulative_report(
+    pszDirectory: str,
+    pszPrefix: str,
+    objRange: Tuple[Tuple[int, int], Tuple[int, int]],
+    pszInputPrefix: Optional[str] = None,
+) -> None:
+    objStart, objEnd = objRange
+    objMonths = build_month_sequence(objStart, objEnd)
+    if not objMonths:
+        return
+
+    if pszInputPrefix is None:
+        pszInputPrefix = pszPrefix
+
+    objTotalRows: Optional[List[List[str]]] = None
+    for objMonth in objMonths:
+        objRows: Optional[List[List[str]]] = read_report_rows(
+            pszDirectory,
+            pszInputPrefix,
+            objMonth,
+        )
+        if objRows is None:
+            return
+        if objTotalRows is None:
+            objTotalRows = objRows
+        else:
+            objTotalRows = sum_tsv_rows(objTotalRows, objRows)
+
+    if objTotalRows is None:
+        return
+    pszOutputPath: str = build_cumulative_file_path(pszDirectory, pszPrefix, objStart, objEnd)
+    write_tsv_rows(pszOutputPath, objTotalRows)
+    print(f"Output: {pszOutputPath}")
+    pszVerticalOutputPath: str = pszOutputPath.replace(".tsv", "_vertical.tsv")
+    objVerticalRows: List[List[str]] = transpose_rows(objTotalRows)
+    write_tsv_rows(pszVerticalOutputPath, objVerticalRows)
+    print(f"Output: {pszVerticalOutputPath}")
+
+
+def build_pj_summary_range(
+    objRange: Tuple[Tuple[int, int], Tuple[int, int]],
+) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+    _, objEnd = objRange
+    iEndYear, iEndMonth = objEnd
+    if iEndMonth >= 4:
+        iStartYear: int = iEndYear
+    else:
+        iStartYear = iEndYear - 1
+    return (iStartYear, 4), (iEndYear, iEndMonth)
+
+
+def create_cumulative_reports(pszPlPath: str) -> None:
+    pszDirectory: str = os.path.dirname(pszPlPath)
+    pszRangePath: Optional[str] = find_selected_range_path(pszDirectory)
+    if pszRangePath is None:
+        return
+
+    objRange = parse_selected_range(pszRangePath)
+    if objRange is None:
+        return
+
+    objStart, objEnd = objRange
+    objFiscalARanges = split_by_fiscal_boundary(objStart, objEnd, 3)
+    objFiscalBRanges = split_by_fiscal_boundary(objStart, objEnd, 8)
+    objAllRanges = objFiscalARanges + objFiscalBRanges
+
+    for objRangeItem in objAllRanges:
+        create_cumulative_report(
+            pszDirectory,
+            "損益計算書",
+            objRangeItem,
+            pszInputPrefix="損益計算書_販管費配賦",
+        )
+        create_cumulative_report(pszDirectory, "製造原価報告書", objRangeItem)
+    objPjSummaryRange = build_pj_summary_range(objRange)
+    create_pj_summary(pszPlPath, objPjSummaryRange)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 3:
+        print_usage()
+        return 1
+
+    objCsvInputs: List[str] = [pszPath for pszPath in argv[1:] if pszPath.lower().endswith(".csv")]
+    objTsvInputs: List[str] = [pszPath for pszPath in argv[1:] if pszPath.lower().endswith(".tsv")]
+
+    if objCsvInputs and objTsvInputs:
+        print(
+            "Error: CSV と TSV を混在させて実行することはできません。"
+            " CSV は CSV だけでドラッグ＆ドロップしてください。"
+            " TSV は TSV だけでドラッグ＆ドロップしてください。"
+        )
+        return 1
+
+    if objCsvInputs and not objTsvInputs:
+        print(
+            "Error: 本スクリプトは TSV 専用です。CSV は CSV だけでドラッグ＆ドロップしてください。"
+            " TSV を扱う場合は TSV のみを指定してください。"
+        )
+        print_usage()
+        return 1
+
+    objArgv: list[str] = [argv[0]] + (objTsvInputs if objTsvInputs else argv[1:])
+
+    if len(objArgv) < 3:
+        print_usage()
+        return 1
+
+    if len(objArgv) == 4:
+        objPairs: List[List[str]] = [[objArgv[1], objArgv[2], objArgv[3]]]
+    else:
+        iArgCount: int = len(objArgv) - 1
+        if iArgCount % 2 != 0:
+            print_usage()
+            return 1
+        objPairs = []
+        objManhourCandidates: List[str] = []
+        objPlCandidates: List[str] = []
+        bGroupedOrder: bool = True
+        bSeenPl: bool = False
+        for pszCandidate in objArgv[1:]:
+            pszBaseName: str = os.path.basename(pszCandidate)
+            if pszBaseName.startswith("工数_"):
+                if bSeenPl:
+                    bGroupedOrder = False
+                objManhourCandidates.append(pszCandidate)
+                continue
+            if pszBaseName.startswith("損益計算書_"):
+                bSeenPl = True
+                objPlCandidates.append(pszCandidate)
+                continue
+            bGroupedOrder = False
             break
 
-    # -----------------------------------------------------------
-    # TSV 出力（Sheet7, Sheet8, Sheet9）
-    # -----------------------------------------------------------
-    try:
-        objDataFrameOutputSheet7: DataFrame = DataFrame(objListOutputRowsSheet7)
-        objDataFrameOutputSheet7.to_csv(
-            pszSheet7FileFullPath,
-            sep="\t",
-            index=False,
-            header=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet7ErrorFileFullPath,
-            "Error: unexpected exception while writing Sheet7 TSV. Detail = {0}".format(objException),
-        )
-        return
-
-    try:
-        objDataFrameOutputSheet8: DataFrame = DataFrame(objListOutputRowsSheet8)
-        objDataFrameOutputSheet8.to_csv(
-            pszSheet8FileFullPath,
-            sep="\t",
-            index=False,
-            header=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet8ErrorFileFullPath,
-            "Error: unexpected exception while writing Sheet8 TSV. Detail = {0}".format(objException),
-        )
-        return
-
-    try:
-        # Sheet9 はヘッダー行あり（氏名, スタッフコード）
-        objDataFrameOutputSheet9: DataFrame = DataFrame(
-            objListOutputRowsSheet9,
-            columns=["氏名", "スタッフコード"],
-        )
-        objDataFrameOutputSheet9.to_csv(
-            pszSheet9FileFullPath,
-            sep="\t",
-            index=False,
-            header=True,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet9ErrorFileFullPath,
-            "Error: unexpected exception while writing Sheet9 TSV. Detail = {0}".format(objException),
-        )
-        return
-
-    try:
-        objDataFrameOutputSheet10: DataFrame = DataFrame(objListOutputRowsSheet10)
-        objDataFrameOutputSheet10.to_csv(
-            pszSheet10FileFullPath,
-            sep="\t",
-            index=False,
-            header=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-    except Exception as objException:
-        write_error_tsv(
-            pszSheet10ErrorFileFullPath,
-            "Error: unexpected exception while writing Sheet10 TSV. Detail = {0}".format(objException),
-        )
-        return
-
-
-# ---------------------------------------------------------------
-# エントリポイント
-# ---------------------------------------------------------------
-def main() -> None:
-    iArgCount: int = len(sys.argv)
-
-    # 引数不足 → _error_argument.tsv を出力
-    if iArgCount < 4:
-        pszProgram: str = os.path.basename(sys.argv[0])
-        pszErrorFile: str = "make_sheet789_from_sheet4_error_argument.tsv"
-
-        write_error_tsv(
-            pszErrorFile,
-            "Error: input TSV file paths are not specified (insufficient arguments).\n"
-            "Usage: python {0} <Sheet4_tsv_file_path> <Sheet4_staff_code_range_tsv_file_path> <Sheet6_tsv_file_path>\n"
-            "Example: python {0} Sheet4.tsv Sheet4_staff_code_range.tsv Sheet6.tsv".format(pszProgram),
-        )
-        return
-
-    pszSheet4FileFullPath: str = sys.argv[1]
-    pszRangeFileFullPath: str = sys.argv[2]
-    pszSheet6FileFullPath: str = sys.argv[3]
-
-    make_sheet789_from_sheet4(
-        pszSheet4FileFullPath,
-        pszRangeFileFullPath,
-        pszSheet6FileFullPath,
-    )
-
-
-# ---------------------------------------------------------------
-if __name__ == "__main__":
-    main()
-'''
-
-# ///////////////////////////////////////////////////////////////
-#
-# 各スクリプトを独立名前空間で実行するためのヘルパー
-#
-# ///////////////////////////////////////////////////////////////
-def create_module_from_source(
-    pszModuleName: str,
-    pszSourceCode: str,
-) -> Dict[str, Any]:
-    objGlobals: Dict[str, Any] = {
-        "__name__": pszModuleName,
-        "__file__": pszModuleName + ".py",
-        "__package__": None,
-    }
-    exec(pszSourceCode, objGlobals)
-    return objGlobals
-
-
-# ///////////////////////////////////////////////////////////////
-#
-# エラー内容を UTF-8 テキストとして書き出す関数
-#
-# ///////////////////////////////////////////////////////////////
-def write_error_text_utf8(
-    pszOutputTextFilePath: str,
-    pszErrorMessage: str,
-) -> None:
-    pszDirectory: str = os.path.dirname(pszOutputTextFilePath)
-    if pszDirectory != "":
-        os.makedirs(pszDirectory, exist_ok=True)
-
-    with open(
-        pszOutputTextFilePath,
-        mode="w",
-        encoding="utf-8",
-        newline="",
-    ) as objFile:
-        objFile.write(pszErrorMessage)
-
-
-# ///////////////////////////////////////////////////////////////
-#
-# Project_List.tsv 生成
-#
-# ///////////////////////////////////////////////////////////////
-def convert_time_text_to_seconds_for_project_list(pszTimeText: str) -> int:
-    pszText: str = str(pszTimeText or "").strip()
-    if len(pszText) == 0:
-        return 0
-
-    objParts: List[str] = pszText.split(":")
-    try:
-        if len(objParts) == 2:
-            iHours: int = int(objParts[0])
-            iMinutes: int = int(objParts[1])
-            return iHours * 3600 + iMinutes * 60
-
-        if len(objParts) == 3:
-            iHours: int = int(objParts[0])
-            iMinutes: int = int(objParts[1])
-            iSeconds: int = int(objParts[2])
-            return iHours * 3600 + iMinutes * 60 + iSeconds
-    except ValueError:
-        return 0
-
-    return 0
-
-
-def format_seconds_to_h_mm_ss(iTotalSeconds: int) -> str:
-    iSecondsSafe: int = max(int(iTotalSeconds or 0), 0)
-    if iSecondsSafe == 0:
-        return ""
-    iHours: int = iSecondsSafe // 3600
-    iMinutes: int = (iSecondsSafe % 3600) // 60
-    iSeconds: int = iSecondsSafe % 60
-    return f"{iHours}:{iMinutes:02}:{iSeconds:02}"
-
-
-def _replace_raw_data_column_ranges(
-    pszFormula: str,
-    iLastRowNumber: int,
-) -> str:
-    objReplacements: List[Tuple[str, str]] = [
-        ("$A:$A", f"$A$1:$A${iLastRowNumber}"),
-        ("$D:$D", f"$D$1:$D${iLastRowNumber}"),
-        ("$L:$L", f"$L$1:$L${iLastRowNumber}"),
-    ]
-
-    pszResult: str = pszFormula
-    for pszTarget, pszReplacement in objReplacements:
-        if pszTarget in pszResult:
-            pszResult = pszResult.replace(pszTarget, pszReplacement)
-
-    return pszResult
-
-
-def _replace_raw_data_column_ranges_in_dataframe(
-    objDataFrame: pd.DataFrame,
-    iLastRowNumber: int,
-) -> pd.DataFrame:
-    if objDataFrame.empty:
-        return objDataFrame
-
-    return objDataFrame.applymap(
-        lambda pszValue: _replace_raw_data_column_ranges(str(pszValue), iLastRowNumber)
-    )
-
-
-def make_project_list_tsv_from_raw_data(
-    pszRawDataTsvPath: str,
-    pszProjectListFormulaTsvPath: str,
-    pszOutputTsvPath: str,
-) -> None:
-    try:
-        if not os.path.isfile(pszRawDataTsvPath):
-            with open(
-                pszRawDataTsvPath.replace(".tsv", "_error.tsv"),
-                "w",
-                encoding="utf-8",
-            ) as objFile:
-                objFile.write(
-                    "Error: input TSV file not found. Path = {0}".format(
-                        pszRawDataTsvPath,
-                    )
-                )
-            return
-
-        if not os.path.isfile(pszProjectListFormulaTsvPath):
-            with open(
-                pszProjectListFormulaTsvPath.replace(".tsv", "_error.tsv"),
-                "w",
-                encoding="utf-8",
-            ) as objFile:
-                objFile.write(
-                    "Error: input TSV file not found. Path = {0}".format(
-                        pszProjectListFormulaTsvPath,
-                    )
-                )
-            return
-
-        objRawDataSheetForProjectList: pd.DataFrame = pd.read_csv(
-            pszRawDataTsvPath,
-            sep="\t",
-            dtype=str,
-            encoding="utf-8",
-            engine="python",
-        )
-        objProjectListFormulaSheet: pd.DataFrame = pd.read_csv(
-            pszProjectListFormulaTsvPath,
-            sep="\t",
-            dtype=str,
-            encoding="utf-8",
-            header=None,
-            engine="python",
+        bSplitByGroup: bool = (
+            bGroupedOrder
+            and len(objManhourCandidates) == len(objPlCandidates)
+            and len(objManhourCandidates) + len(objPlCandidates) == iArgCount
         )
 
-        objOutputProjectList: pd.DataFrame = pd.DataFrame(
-            "",
-            index=objProjectListFormulaSheet.index,
-            columns=objProjectListFormulaSheet.columns,
-        )
+        if bSplitByGroup:
+            for iIndex in range(len(objManhourCandidates)):
+                objPairs.append([objManhourCandidates[iIndex], objPlCandidates[iIndex]])
+        else:
+            for iIndex in range(1, len(objArgv), 2):
+                if iIndex + 1 >= len(objArgv):
+                    print_usage()
+                    return 1
+                objPairs.append([objArgv[iIndex], objArgv[iIndex + 1]])
 
-        objEvaluatedCellsProjectList: Dict[Tuple[str, int, int], Any] = {}
-        objEvaluatingCellsProjectList: set[Tuple[str, int, int]] = set()
+    objPairsWithMonths: List[Tuple[str, str, Optional[Tuple[int, int]]]] = []
+    objParsedMonths: List[Tuple[int, int]] = []
+    for objPair in objPairs:
+        pszManhourPath: str = objPair[0]
+        pszPlPath: str = objPair[1]
+        objMonthPl: Optional[Tuple[int, int]] = extract_year_month_from_path(pszPlPath)
+        objMonthManhour: Optional[Tuple[int, int]] = extract_year_month_from_path(pszManhourPath)
+        objMonth: Optional[Tuple[int, int]] = objMonthPl if objMonthPl is not None else objMonthManhour
+        if objMonthPl is not None and objMonthManhour is not None and objMonthPl != objMonthManhour:
+            objMonth = None
+        objPairsWithMonths.append((pszManhourPath, pszPlPath, objMonth))
+        if objMonth is not None:
+            objParsedMonths.append(objMonth)
 
-        class ProjectListCircularReferenceError(RuntimeError):
-            pass
+    objSelectedRange: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
+    if objParsedMonths:
+        objSelectedRange = find_best_continuous_range(objParsedMonths)
 
-        def tokenize_formula_project_list(pszFormula: str) -> List[Tuple[str, str]]:
-            objTokens: List[Tuple[str, str]] = []
-            iPos: int = 0
-            while iPos < len(pszFormula):
-                ch: str = pszFormula[iPos]
-                if ch.isspace():
-                    iPos += 1
-                    continue
-                if ch.isdigit() or (ch == "." and iPos + 1 < len(pszFormula) and pszFormula[iPos + 1].isdigit()):
-                    iStart: int = iPos
-                    iPos += 1
-                    while iPos < len(pszFormula) and (pszFormula[iPos].isdigit() or pszFormula[iPos] == "."):
-                        iPos += 1
-                    objTokens.append(("number", pszFormula[iStart:iPos]))
-                    continue
-                if ch == '"':
-                    iPos += 1
-                    iStart: int = iPos
-                    while iPos < len(pszFormula) and pszFormula[iPos] != '"':
-                        iPos += 1
-                    objTokens.append(("string", pszFormula[iStart:iPos]))
-                    iPos += 1
-                    continue
-                if ch.isalpha() or ch in ["_", "$", "!"]:
-                    iStart: int = iPos
-                    iPos += 1
-                    while iPos < len(pszFormula) and (pszFormula[iPos].isalnum() or pszFormula[iPos] in ["_", "$", "!"]):
-                        iPos += 1
-                    objTokens.append(("ident", pszFormula[iStart:iPos]))
-                    continue
-                if ch in ["+", "-", "*", "/", "&"]:
-                    objTokens.append(("op", ch))
-                    iPos += 1
-                    continue
-                if ch in ["=", "<", ">"]:
-                    if iPos + 1 < len(pszFormula) and pszFormula[iPos:iPos + 2] in ["<=", ">=", "<>"]:
-                        objTokens.append(("cmp", pszFormula[iPos:iPos + 2]))
-                        iPos += 2
-                    else:
-                        objTokens.append(("cmp", ch))
-                        iPos += 1
-                    continue
-                if ch in ["(", ")", ",", ":"]:
-                    objTokens.append(("symbol", ch))
-                    iPos += 1
-                    continue
-                iPos += 1
-            return objTokens
+    if objSelectedRange is None:
+        pszBaseDirectory: str = os.path.dirname(objPairs[0][1]) if objPairs else os.getcwd()
+        pszRangePath: Optional[str] = find_selected_range_path(pszBaseDirectory)
+        if pszRangePath is not None:
+            objSelectedRange = parse_selected_range(pszRangePath)
+        if objSelectedRange is None:
+            print("Error: 採用範囲を取得できませんでした。", file=sys.stderr)
+            return 1
 
-        def column_label_to_index_project_list(pszLabel: str) -> int:
-            iResult: int = 0
-            for ch in pszLabel.upper():
-                if ch == "$":
-                    continue
-                if ch < "A" or ch > "Z":
-                    return -1
-                iResult = iResult * 26 + (ord(ch) - ord("A") + 1)
-            return iResult - 1
-
-        def is_cell_reference_project_list(pszText: str) -> bool:
-            pszTextUpper: str = pszText.upper()
-            if "!" in pszTextUpper:
-                pszTextUpper = pszTextUpper.split("!", 1)[1]
-            iIndex: int = 0
-            while iIndex < len(pszTextUpper) and pszTextUpper[iIndex].isalpha():
-                iIndex += 1
-            if iIndex == 0:
-                return False
-            pszRowPart: str = pszTextUpper[iIndex:]
-            return pszRowPart.isdigit()
-
-        def parse_cell_reference_project_list(
-            pszReference: str,
-        ) -> Tuple[str | None, int, int]:
-            if "!" in pszReference:
-                pszSheetName, pszCell = pszReference.split("!", 1)
-            else:
-                pszSheetName = None
-                pszCell = pszReference
-            pszColumnPart: str = ""
-            pszRowPart: str = ""
-            for ch in pszCell:
-                if ch.isalpha() or ch == "$":
-                    pszColumnPart += ch
-                else:
-                    pszRowPart += ch
-            pszColumnPart = pszColumnPart.replace("$", "")
-            pszRowPart = pszRowPart.replace("$", "")
-            iRow: int = int(pszRowPart) - 1 if pszRowPart.isdigit() else -1
-            iColumn: int = column_label_to_index_project_list(pszColumnPart) if len(pszColumnPart) > 0 else -1
-            return pszSheetName, iRow, iColumn
-
-        def parse_expression_project_list(
-            objTokens: List[Tuple[str, str]],
-            iStart: int,
-        ) -> Tuple[Any, int]:
-            objValue, iPos = parse_comparison_project_list(objTokens, iStart)
-            return objValue, iPos
-
-        def parse_comparison_project_list(
-            objTokens: List[Tuple[str, str]],
-            iStart: int,
-        ) -> Tuple[Any, int]:
-            objLeft, iPos = parse_term_project_list(objTokens, iStart)
-            while iPos < len(objTokens) and objTokens[iPos][0] == "cmp":
-                pszOp: str = objTokens[iPos][1]
-                objRight, iPos = parse_term_project_list(objTokens, iPos + 1)
-                objLeft = ("cmp", pszOp, objLeft, objRight)
-            return objLeft, iPos
-
-        def parse_term_project_list(
-            objTokens: List[Tuple[str, str]],
-            iStart: int,
-        ) -> Tuple[Any, int]:
-            objLeft, iPos = parse_factor_project_list(objTokens, iStart)
-            while iPos < len(objTokens) and objTokens[iPos][0] == "op" and objTokens[iPos][1] in ["+", "-", "&"]:
-                pszOp: str = objTokens[iPos][1]
-                objRight, iPos = parse_factor_project_list(objTokens, iPos + 1)
-                objLeft = ("op", pszOp, objLeft, objRight)
-            return objLeft, iPos
-
-        def parse_factor_project_list(
-            objTokens: List[Tuple[str, str]],
-            iStart: int,
-        ) -> Tuple[Any, int]:
-            objLeft, iPos = parse_unary_project_list(objTokens, iStart)
-            while iPos < len(objTokens) and objTokens[iPos][0] == "op" and objTokens[iPos][1] in ["*", "/"]:
-                pszOp: str = objTokens[iPos][1]
-                objRight, iPos = parse_unary_project_list(objTokens, iPos + 1)
-                objLeft = ("op", pszOp, objLeft, objRight)
-            return objLeft, iPos
-
-        def parse_unary_project_list(
-            objTokens: List[Tuple[str, str]],
-            iStart: int,
-        ) -> Tuple[Any, int]:
-            if iStart < len(objTokens) and objTokens[iStart][0] == "op" and objTokens[iStart][1] in ["+", "-"]:
-                pszOp: str = objTokens[iStart][1]
-                objValue, iPos = parse_unary_project_list(objTokens, iStart + 1)
-                return ("unary", pszOp, objValue), iPos
-            return parse_primary_project_list(objTokens, iStart)
-
-        def parse_primary_project_list(
-            objTokens: List[Tuple[str, str]],
-            iStart: int,
-        ) -> Tuple[Any, int]:
-            objTokenType, pszToken = objTokens[iStart]
-            if objTokenType == "number":
-                return ("number", pszToken), iStart + 1
-            if objTokenType == "string":
-                return ("string", pszToken), iStart + 1
-            if objTokenType == "ident":
-                if iStart + 1 < len(objTokens) and objTokens[iStart + 1] == ("symbol", "("):
-                    pszFuncName: str = pszToken.upper()
-                    objArgs: List[Any] = []
-                    iPos: int = iStart + 2
-                    if iPos < len(objTokens) and objTokens[iPos] == ("symbol", ")"):
-                        iPos += 1
-                    else:
-                        while iPos < len(objTokens):
-                            objArg, iPos = parse_expression_project_list(objTokens, iPos)
-                            objArgs.append(objArg)
-                            if iPos < len(objTokens) and objTokens[iPos] == ("symbol", ","):
-                                iPos += 1
-                                continue
-                            if iPos < len(objTokens) and objTokens[iPos] == ("symbol", ")"):
-                                iPos += 1
-                                break
-                    return ("func", pszFuncName, objArgs), iPos
-                if is_cell_reference_project_list(pszToken):
-                    if iStart + 1 < len(objTokens) and objTokens[iStart + 1] == ("symbol", ":"):
-                        pszSecond: str = objTokens[iStart + 2][1] if (iStart + 2) < len(objTokens) else ""
-                        return ("range", pszToken, pszSecond), iStart + 3
-                    return ("cell", pszToken), iStart + 1
-                return ("string", pszToken), iStart + 1
-            if objTokenType == "symbol" and pszToken == "(":
-                objValue, iPos = parse_expression_project_list(objTokens, iStart + 1)
-                if iPos < len(objTokens) and objTokens[iPos] == ("symbol", ")"):
-                    iPos += 1
-                return objValue, iPos
-            return ("string", pszToken), iStart + 1
-
-        def evaluate_range_project_list(
-            pszSheet: str | None,
-            pszStartCell: str,
-            pszEndCell: str,
-            pszCurrentSheet: str,
-        ) -> List[Any]:
-            pszStartSheet, iStartRow, iStartColumn = parse_cell_reference_project_list(
-                (pszSheet + "!" if pszSheet else "") + pszStartCell,
-            )
-            pszEndSheet, iEndRow, iEndColumn = parse_cell_reference_project_list(
-                (pszSheet + "!" if pszSheet else "") + pszEndCell,
-            )
-            pszTargetSheet: str | None = pszStartSheet or pszEndSheet or pszCurrentSheet
-            objValues: List[Any] = []
-            for iRow in range(min(iStartRow, iEndRow), max(iStartRow, iEndRow) + 1):
-                for iColumn in range(min(iStartColumn, iEndColumn), max(iStartColumn, iEndColumn) + 1):
-                    objValues.append(
-                        evaluate_cell_by_sheet_project_list(
-                            pszTargetSheet,
-                            iRow,
-                            iColumn,
-                            pszCurrentSheet,
-                        ),
-                    )
-            return objValues
-
-        def evaluate_node_project_list(
-            objNode: Any,
-            iCurrentRow: int,
-            iCurrentColumn: int,
-            pszCurrentSheet: str,
-        ) -> Any:
-            if objNode[0] == "number":
-                try:
-                    if "." in objNode[1]:
-                        return float(objNode[1])
-                    return int(objNode[1])
-                except ValueError:
-                    return 0
-            if objNode[0] == "string":
-                return str(objNode[1])
-            if objNode[0] == "unary":
-                pszOp: str = objNode[1]
-                objValue: Any = evaluate_node_project_list(
-                    objNode[2],
-                    iCurrentRow,
-                    iCurrentColumn,
-                    pszCurrentSheet,
-                )
-                try:
-                    fNumber: float = float(objValue)
-                    return -fNumber if pszOp == "-" else fNumber
-                except Exception:
-                    return objValue
-            if objNode[0] == "op":
-                pszOp: str = objNode[1]
-                objLeft: Any = evaluate_node_project_list(
-                    objNode[2],
-                    iCurrentRow,
-                    iCurrentColumn,
-                    pszCurrentSheet,
-                )
-                objRight: Any = evaluate_node_project_list(
-                    objNode[3],
-                    iCurrentRow,
-                    iCurrentColumn,
-                    pszCurrentSheet,
-                )
-                if pszOp == "&":
-                    return str(objLeft) + str(objRight)
-                try:
-                    fLeft: float = float(objLeft)
-                    fRight: float = float(objRight)
-                    if pszOp == "+":
-                        return fLeft + fRight
-                    if pszOp == "-":
-                        return fLeft - fRight
-                    if pszOp == "*":
-                        return fLeft * fRight
-                    if pszOp == "/":
-                        return fLeft / fRight if fRight != 0 else 0
-                except Exception:
-                    if pszOp == "+":
-                        return str(objLeft) + str(objRight)
-                return ""
-            if objNode[0] == "cmp":
-                pszOp: str = objNode[1]
-                objLeft: Any = evaluate_node_project_list(
-                    objNode[2],
-                    iCurrentRow,
-                    iCurrentColumn,
-                    pszCurrentSheet,
-                )
-                objRight: Any = evaluate_node_project_list(
-                    objNode[3],
-                    iCurrentRow,
-                    iCurrentColumn,
-                    pszCurrentSheet,
-                )
-                if pszOp == "=":
-                    return objLeft == objRight
-                if pszOp == "<":
-                    return objLeft < objRight
-                if pszOp == ">":
-                    return objLeft > objRight
-                if pszOp == "<=":
-                    return objLeft <= objRight
-                if pszOp == ">=":
-                    return objLeft >= objRight
-                if pszOp == "<>":
-                    return objLeft != objRight
-            if objNode[0] == "cell":
-                pszSheet, iRow, iColumn = parse_cell_reference_project_list(objNode[1])
-                pszTargetSheet: str = pszSheet or pszCurrentSheet
-                return evaluate_cell_by_sheet_project_list(
-                    pszTargetSheet,
-                    iRow,
-                    iColumn,
-                    pszCurrentSheet,
-                )
-            if objNode[0] == "range":
-                pszSheetStart, _, _ = parse_cell_reference_project_list(objNode[1])
-                pszSheetEnd, _, _ = parse_cell_reference_project_list(objNode[2])
-                pszSheetNameRange: str | None = pszSheetStart or pszSheetEnd or pszCurrentSheet
-                pszStartCell: str = objNode[1].split("!", 1)[-1]
-                pszEndCell: str = objNode[2].split("!", 1)[-1]
-                return evaluate_range_project_list(
-                    pszSheetNameRange,
-                    pszStartCell,
-                    pszEndCell,
-                    pszCurrentSheet,
-                )
-            if objNode[0] == "func":
-                pszFuncName: str = objNode[1]
-                objArgsNodes: List[Any] = objNode[2]
-                objArgsValues: List[Any] = [
-                    evaluate_node_project_list(
-                        objArg,
-                        iCurrentRow,
-                        iCurrentColumn,
-                        pszCurrentSheet,
-                    )
-                    for objArg in objArgsNodes
-                ]
-                if pszFuncName == "IF":
-                    bCondition: bool = bool(objArgsValues[0]) if len(objArgsValues) > 0 else False
-                    if bCondition:
-                        return objArgsValues[1] if len(objArgsValues) > 1 else ""
-                    return objArgsValues[2] if len(objArgsValues) > 2 else ""
-                if pszFuncName == "SUM":
-                    fTotal: float = 0.0
-                    for objArg in objArgsValues:
-                        if isinstance(objArg, list):
-                            for objItem in objArg:
-                                try:
-                                    fTotal += float(objItem)
-                                except Exception:
-                                    continue
-                        else:
-                            try:
-                                fTotal += float(objArg)
-                            except Exception:
-                                continue
-                    return fTotal
-                if pszFuncName == "COUNT":
-                    iCount: int = 0
-                    for objArg in objArgsValues:
-                        if isinstance(objArg, list):
-                            for objItem in objArg:
-                                if objItem not in ["", None]:
-                                    iCount += 1
-                        else:
-                            if objArg not in ["", None]:
-                                iCount += 1
-                    return iCount
-                if pszFuncName == "TEXT":
-                    return str(objArgsValues[0]) if len(objArgsValues) > 0 else ""
-                if pszFuncName == "CONCAT":
-                    return "".join(str(objArg) for objArg in objArgsValues)
-            return ""
-
-        def evaluate_formula_project_list(
-            pszFormula: str,
-            iCurrentRow: int,
-            iCurrentColumn: int,
-            pszCurrentSheet: str,
-        ) -> Any:
-            objTokens = tokenize_formula_project_list(pszFormula)
-            objAst, _ = parse_expression_project_list(objTokens, 0)
-            return evaluate_node_project_list(
-                objAst,
-                iCurrentRow,
-                iCurrentColumn,
-                pszCurrentSheet,
-            )
-
-        def evaluate_cell_by_sheet_project_list(
-            pszSheetName: str,
-            iRow: int,
-            iColumn: int,
-            pszCurrentSheet: str,
-        ) -> Any:
-            if pszSheetName == "ローデータ":
-                if (iRow < 0) or (iColumn < 0):
-                    return ""
-                if iRow >= objRawDataSheetForProjectList.shape[0] or iColumn >= objRawDataSheetForProjectList.shape[1]:
-                    return ""
-                objValue = objRawDataSheetForProjectList.iat[iRow, iColumn]
-                return "" if pd.isna(objValue) else objValue
-            return evaluate_cell_project_list(pszSheetName, iRow, iColumn)
-
-        def evaluate_cell_project_list(
-            pszSheetName: str,
-            iRow: int,
-            iColumn: int,
-        ) -> Any:
-            objKey: Tuple[str, int, int] = (pszSheetName, iRow, iColumn)
-            if objKey in objEvaluatedCellsProjectList:
-                return objEvaluatedCellsProjectList[objKey]
-            if objKey in objEvaluatingCellsProjectList:
-                raise ProjectListCircularReferenceError(
-                    "Error: circular reference detected at {0}!R{1}C{2}".format(
-                        "プロジェクトリスト",
-                        iRow + 1,
-                        iColumn + 1,
-                    ),
-                )
-            if (iRow < 0) or (iColumn < 0):
-                return ""
-            if iRow >= objProjectListFormulaSheet.shape[0] or iColumn >= objProjectListFormulaSheet.shape[1]:
-                return ""
-            objValue = objProjectListFormulaSheet.iat[iRow, iColumn]
-            pszValueStr: str = "" if pd.isna(objValue) else str(objValue)
-            if len(pszValueStr) > 0 and pszValueStr.startswith("="):
-                pszFormula: str = pszValueStr[1:]
-                objEvaluatingCellsProjectList.add(objKey)
-                try:
-                    objResult: Any = evaluate_formula_project_list(
-                        pszFormula,
-                        iRow,
-                        iColumn,
-                        pszSheetName,
-                    )
-                except ProjectListCircularReferenceError as objCircularError:
-                    with open(
-                        pszOutputTsvPath.replace(".tsv", "_error.tsv"),
-                        "w",
-                        encoding="utf-8",
-                    ) as objFile:
-                        objFile.write(str(objCircularError))
-                    raise
-                except Exception as objException:
-                    with open(
-                        pszOutputTsvPath.replace(".tsv", "_error.tsv"),
-                        "w",
-                        encoding="utf-8",
-                    ) as objFile:
-                        objFile.write(
-                            "Error: formula evaluation failed at {0}!R{1}C{2}: {3}".format(
-                                "プロジェクトリスト",
-                                iRow + 1,
-                                iColumn + 1,
-                                objException,
-                            )
-                        )
-                    raise
-                finally:
-                    objEvaluatingCellsProjectList.discard(objKey)
-                objEvaluatedCellsProjectList[objKey] = objResult
-                return objResult
-            objEvaluatedCellsProjectList[objKey] = pszValueStr
-            return pszValueStr
-
-        for iRowIndex in range(objProjectListFormulaSheet.shape[0]):
-            for iColumnIndex in range(objProjectListFormulaSheet.shape[1]):
-                objEvaluatedValueProjectList: Any = evaluate_cell_project_list(
-                    "プロジェクトリスト",
-                    iRowIndex,
-                    iColumnIndex,
-                )
-                objOutputProjectList.iat[iRowIndex, iColumnIndex] = objEvaluatedValueProjectList
-
-        objOutputProjectList.to_csv(
-            pszOutputTsvPath,
-            sep="\t",
-            header=False,
-            index=False,
-            encoding="utf-8",
-            lineterminator="\n",
-        )
-
-        objCheckProjectList: pd.DataFrame = pd.read_csv(
-            pszOutputTsvPath,
-            sep="\t",
-            dtype=str,
-            encoding="utf-8",
-            header=None,
-            engine="python",
-        )
-        bHasFormulaCell: bool = False
-        for iRowIndex in range(1, objCheckProjectList.shape[0]):
-            for iColumnIndex in range(objCheckProjectList.shape[1]):
-                objValue = objCheckProjectList.iat[iRowIndex, iColumnIndex]
-                if isinstance(objValue, str) and objValue.startswith("="):
-                    bHasFormulaCell = True
-                    break
-            if bHasFormulaCell:
-                break
-        if bHasFormulaCell:
-            if os.path.isfile(pszOutputTsvPath):
-                os.remove(pszOutputTsvPath)
-            with open(
-                pszOutputTsvPath.replace(".tsv", "_error.tsv"),
-                "w",
-                encoding="utf-8",
-            ) as objFile:
-                objFile.write(
-                    "Error: Project_List.tsv still contains formula cells starting with '='."
-                )
-    except Exception as objException:
-        if os.path.isfile(pszOutputTsvPath):
-            os.remove(pszOutputTsvPath)
-        with open(
-            pszOutputTsvPath.replace(".tsv", "_error.tsv"),
-            "w",
-            encoding="utf-8",
-        ) as objFile:
-            objFile.write(
-                "Error: unexpected exception. Detail = {0}".format(
-                    objException,
-                )
-            )
-
-
-# ///////////////////////////////////////////////////////////////
-#
-# main
-#
-# ///////////////////////////////////////////////////////////////
-def process_single_input(pszInputManhourCsvPath: str) -> int:
-    objInputPath: Path = Path(pszInputManhourCsvPath)
-
-    objCandidatePaths: List[Path] = [objInputPath]
-
-    objScriptDirectoryPath: Path = Path(__file__).resolve().parent
-    objCandidatePaths.append(objScriptDirectoryPath / pszInputManhourCsvPath)
-
-    objInputDirectoryPath: Path = Path.cwd() / "input"
-    objCandidatePaths.append(objInputDirectoryPath / pszInputManhourCsvPath)
-
-    if objInputPath.suffix.lower() == ".tsv":
-        pszCsvFileName: str = objInputPath.with_suffix(".csv").name
-        objCandidatePaths.append(objInputPath.with_suffix(".csv"))
-        objCandidatePaths.append(objScriptDirectoryPath / pszCsvFileName)
-        objCandidatePaths.append(objInputDirectoryPath / pszCsvFileName)
-
-    objExistingPaths: List[Path] = [objPath for objPath in objCandidatePaths if objPath.exists()]
-    if len(objExistingPaths) > 0:
-        objInputPath = objExistingPaths[0]
-
-    if not objInputPath.exists():
-        pszErrorTextFilePath: str = str(Path.cwd() / "make_manhour_to_sheet8_error.txt")
-        write_error_text_utf8(
-            pszErrorTextFilePath,
-            f"Error: input file not found: {pszInputManhourCsvPath}\n"
-            f"CurrentDirectory: {str(Path.cwd())}\n",
-        )
-        raise FileNotFoundError(f"Input file not found: {pszInputManhourCsvPath}")
-
-    objBaseDirectoryPath: Path = objInputPath.resolve().parent
-
-    # (1) CSV → TSV (H:MM:SS 化)
-    objModuleCsvToTsv: Dict[str, Any] = create_module_from_source(
-        "csv_to_tsv_h_mm_ss",
-        pszSource_csv_to_tsv_h_mm_ss_py,
-    )
-    pszStep1DefaultTsvPath: str = objModuleCsvToTsv["convert_csv_to_tsv_file"](
-        str(objInputPath),
-    )
-    iFileYear: int
-    iFileMonth: int
-    iFileYear, iFileMonth = get_target_year_month_from_filename(str(objInputPath))
-    pszStep1TsvPath: str = str(
-        objBaseDirectoryPath / f"工数_{iFileYear}年{iFileMonth:02d}月.tsv"
-    )
-    if pszStep1DefaultTsvPath != pszStep1TsvPath:
-        os.replace(pszStep1DefaultTsvPath, pszStep1TsvPath)
-
-    # (2) 未入力行除去
-    objModuleRemoveUninput: Dict[str, Any] = create_module_from_source(
-        "manhour_remove_uninput_rows",
-        pszSource_manhour_remove_uninput_rows_py,
-    )
-    objModuleRemoveUninput["make_removed_uninput_tsv_from_manhour_tsv"](
-        pszStep1TsvPath,
-    )
-    pszStep2TsvPath: str = objModuleRemoveUninput["build_output_file_full_path"](
-        pszStep1TsvPath,
-    )
-
-    # (3) スタッフコード順ソート
-    objModuleSortByStaffCode: Dict[str, Any] = create_module_from_source(
-        "sort_manhour_by_staff_code",
-        pszSource_sort_manhour_by_staff_code_py,
-    )
-    objModuleSortByStaffCode["make_sorted_staff_code_tsv_from_manhour_tsv"](
-        pszStep2TsvPath,
-    )
-    pszStep3TsvPath: str = objModuleSortByStaffCode["build_output_file_full_path"](
-        pszStep2TsvPath,
-    )
-
-    # (4) 日付正規化 → 工数_yyyy年mm月_step04_yyyy_mm_dd.tsv
-    objModuleConvertDate: Dict[str, Any] = create_module_from_source(
-        "convert_yyyy_mm_dd",
-        pszSource_convert_yyyy_mm_dd_py,
-    )
-    pszSheet4TsvPath: str = str(
-        objBaseDirectoryPath / f"工数_{iFileYear}年{iFileMonth:02d}月_step04_yyyy_mm_dd.tsv"
-    )
-    objModuleConvertDate["make_sheet4_tsv_from_input_tsv"](
-        pszStep3TsvPath,
-        pszSheet4TsvPath,
-    )
-
-    # Sheet4.tsv からスタッフコード一覧を作成
-    objModuleUniqueStaffCodeList: Dict[str, Any] = create_module_from_source(
-        "make_unique_staff_code_list",
-        pszSource_make_unique_staff_code_list_py,
-    )
-    objModuleUniqueStaffCodeList["make_unique_staff_code_tsv_from_sheet1_tsv"](
-        pszSheet4TsvPath,
-    )
-    pszSheet4UniqueStaffCodeTsvPath: str = objModuleUniqueStaffCodeList[
-        "build_output_file_full_path"
-    ](pszSheet4TsvPath)
-
-    # (5) Sheet4_staff_code_range.tsv
-    objModuleMakeRange: Dict[str, Any] = create_module_from_source(
-        "make_staff_code_range",
-        pszSource_make_staff_code_range_py,
-    )
-    objModuleMakeRange["make_staff_code_range_tsv_from_sheet1_tsv"](
-        pszSheet4TsvPath,
-    )
-    pszSheet4StaffCodeRangeTsvPath: str = objModuleMakeRange[
-        "build_output_file_full_path"
-    ](pszSheet4TsvPath)
-
-    # (6) 工数_yyyy年mm月_step05_スタッフ別担当プロジェクト.tsv
-    objModuleMakeSheet6: Dict[str, Any] = create_module_from_source(
-        "make_sheet6_from_sheet4",
-        pszSource_make_sheet6_from_sheet4_py,
-    )
-    pszSheet6DefaultTsvPath: str = objModuleMakeSheet6["build_output_file_full_path"](
-        pszSheet4TsvPath,
-    )
-    pszSheet6TsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step05_スタッフ別担当プロジェクト.tsv"
-    )
-    objModuleMakeSheet6["make_sheet6_from_sheet4"](
-        pszSheet4TsvPath,
-        pszSheet4StaffCodeRangeTsvPath,
-    )
-    if not os.path.isfile(pszSheet6DefaultTsvPath):
-        print(
-            "Error: failed to generate Sheet6 TSV. Path = {0}".format(
-                pszSheet6DefaultTsvPath,
-            )
-        )
-        write_debug_error(
-            "Error: failed to generate Sheet6 TSV. Path = {0}".format(
-                pszSheet6DefaultTsvPath,
-            ),
-            objBaseDirectoryPath,
-        )
-        return 1
-    if pszSheet6DefaultTsvPath != pszSheet6TsvPath:
-        os.replace(pszSheet6DefaultTsvPath, pszSheet6TsvPath)
-
-    # (7) 工数_yyyy年mm月_step06_プロジェクト_タスク_工数.tsv
-    #     工数_yyyy年mm月_step06_旧版_スタッフ別_プロジェクト_タスク_工数.tsv
-    #     工数_yyyy年mm月_step06_旧版_氏名_スタッフコード.tsv
-    #     工数_yyyy年mm月_step06_プロジェクト_計上カンパニー名_タスク_工数.tsv
-    objModuleMakeSheet789: Dict[str, Any] = create_module_from_source(
-        "make_sheet789_from_sheet4",
-        pszSource_make_sheet789_from_sheet4_py,
-    )
-    pszSheet7DefaultTsvPath: str = objModuleMakeSheet789[
-        "build_output_file_full_path_for_sheet7"
-    ](pszSheet4TsvPath)
-    pszSheet8DefaultTsvPath: str = objModuleMakeSheet789[
-        "build_output_file_full_path_for_sheet8"
-    ](pszSheet4TsvPath)
-    pszSheet9DefaultTsvPath: str = objModuleMakeSheet789[
-        "build_output_file_full_path_for_sheet9"
-    ](pszSheet4TsvPath)
-    pszSheet10DefaultTsvPath: str = objModuleMakeSheet789[
-        "build_output_file_full_path_for_sheet10"
-    ](pszSheet4TsvPath)
-    pszSheet7TsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step06_プロジェクト_タスク_工数.tsv"
-    )
-    pszSheet8TsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step06_旧版_スタッフ別_プロジェクト_タスク_工数.tsv"
-    )
-    pszSheet9TsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step06_旧版_氏名_スタッフコード.tsv"
-    )
-    pszSheet10StaffCompanyTsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step06_プロジェクト_スタッフ計上カンパニー名_タスク_工数.tsv"
-    )
-    pszSheet10CompanyTaskTsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step06_プロジェクト_計上カンパニー名_タスク_工数.tsv"
-    )
-    objModuleMakeSheet789["make_sheet789_from_sheet4"](
-        pszSheet4TsvPath,
-        pszSheet4StaffCodeRangeTsvPath,
-        pszSheet6TsvPath,
-    )
-    if pszSheet7DefaultTsvPath != pszSheet7TsvPath:
-        os.replace(pszSheet7DefaultTsvPath, pszSheet7TsvPath)
-    if pszSheet8DefaultTsvPath != pszSheet8TsvPath:
-        os.replace(pszSheet8DefaultTsvPath, pszSheet8TsvPath)
-    if pszSheet9DefaultTsvPath != pszSheet9TsvPath:
-        os.replace(pszSheet9DefaultTsvPath, pszSheet9TsvPath)
-    if pszSheet10DefaultTsvPath != pszSheet10StaffCompanyTsvPath:
-        os.replace(pszSheet10DefaultTsvPath, pszSheet10StaffCompanyTsvPath)
-
-    def normalize_company_name_sheet10(pszCompanyName: str) -> str:
-        objReplaceTargets: List[Tuple[str, str]] = [
-            ("本部", "本部"),
-            ("事業開発", "事業開発"),
-            ("子会社", "子会社"),
-            ("投資先", "投資先"),
-            ("第１インキュ", "第一インキュ"),
-            ("第２インキュ", "第二インキュ"),
-            ("第３インキュ", "第三インキュ"),
-            ("第４インキュ", "第四インキュ"),
-            ("第1インキュ", "第一インキュ"),
-            ("第2インキュ", "第二インキュ"),
-            ("第3インキュ", "第三インキュ"),
-            ("第4インキュ", "第四インキュ"),
+    objSelectedPairs: List[List[str]]
+    if objParsedMonths:
+        objSelectedPairs = [
+            [pszManhourPath, pszPlPath]
+            for pszManhourPath, pszPlPath, objMonth in objPairsWithMonths
+            if objMonth is not None and is_month_in_range(objMonth, objSelectedRange)
         ]
-        for pszPrefix, pszReplacement in objReplaceTargets:
-            if pszCompanyName.startswith(pszPrefix):
-                return pszReplacement
-        return pszCompanyName
-
-    with open(pszSheet10StaffCompanyTsvPath, "r", encoding="utf-8") as objSheet10CompanyFile:
-        with open(pszSheet10CompanyTaskTsvPath, "w", encoding="utf-8") as objSheet10CompanyOutputFile:
-            for pszLine in objSheet10CompanyFile:
-                pszLineContent = pszLine.rstrip("\n")
-                if pszLineContent == "":
-                    objSheet10CompanyOutputFile.write("\n")
-                    continue
-                objColumns = pszLineContent.split("\t")
-                if len(objColumns) > 1:
-                    objColumns[1] = normalize_company_name_sheet10(objColumns[1])
-                objSheet10CompanyOutputFile.write("\t".join(objColumns) + "\n")
-
-    # (8) 工数_yyyy年mm月_step07_計算前_プロジェクト_工数.tsv
-    #     工数_yyyy年mm月_step07_計算前_プロジェクト_計上カンパニー名_工数.tsv
-    #     工数_yyyy年mm月_step08_合計_プロジェクト_工数.tsv
-    #     工数_yyyy年mm月_step08_合計_プロジェクト_計上カンパニー名_工数.tsv
-    #     工数_yyyy年mm月_step09_昇順_合計_プロジェクト_工数.tsv
-    pszSheet10ProjectTsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step07_計算前_プロジェクト_工数.tsv"
-    )
-    pszSheet10CompanyTsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step07_計算前_プロジェクト_計上カンパニー名_工数.tsv"
-    )
-    pszSheet11TsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step08_合計_プロジェクト_工数.tsv"
-    )
-    pszSheet11CompanyTsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step08_合計_プロジェクト_計上カンパニー名_工数.tsv"
-    )
-    pszSheet12TsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step09_昇順_合計_プロジェクト_工数.tsv"
-    )
-    pszSheet12CompanyTsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step09_昇順_合計_プロジェクト_計上カンパニー名_工数.tsv"
-    )
-    pszSheet12CompanyGroupTsvPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step09_昇順_合計_プロジェクト_計上カンパニー名_計上グループ_工数.tsv"
-    )
-
-    def is_blank_sheet10(value: str | None) -> bool:
-        if value is None:
-            return True
-        if value == "":
-            return True
-        if value.strip() == "":
-            return True
-        if value.lower() == "nan":
-            return True
-        return False
-
-    def parse_manhour_to_seconds_sheet11(pszManhour: str) -> int:
-        objMatch = re.match(r"^(\d+):([0-5]\d):([0-5]\d)$", pszManhour)
-        if not objMatch:
-            raise ValueError(f"Invalid manhour format: {pszManhour}")
-        iHours: int = int(objMatch.group(1))
-        iMinutes: int = int(objMatch.group(2))
-        iSeconds: int = int(objMatch.group(3))
-        return iHours * 3600 + iMinutes * 60 + iSeconds
-
-    def format_seconds_to_manhour_sheet11(iTotalSeconds: int) -> str:
-        if iTotalSeconds < 0:
-            raise ValueError("Total seconds must not be negative.")
-        iHours: int = iTotalSeconds // 3600
-        iMinutes: int = (iTotalSeconds % 3600) // 60
-        iSeconds: int = iTotalSeconds % 60
-        return f"{iHours}:{iMinutes:02d}:{iSeconds:02d}"
-
-    def extract_project_prefix_sheet12(pszProjectName: str) -> str:
-        iUnderscoreIndex: int = pszProjectName.find("_")
-        if iUnderscoreIndex == -1:
-            return pszProjectName
-        return pszProjectName[:iUnderscoreIndex]
-
-    #/*
-    # *
-    # * process_single_input後半
-    # *
-    # * 管轄PJ表.csvを読み込み、正規化した内容を
-    # * 管轄PJ表_step0004.tsvとして書き出す処理です。
-    # *
-    # * 処理の流れ:
-    # * ・管轄PJ表.csvを行ごとに読み、=match' を除去。
-    # * ・末尾の空セルを削除。
-    # * ・先頭列が "No" でない行について、
-    # * 　3列目のPJコードを正規化。
-    # * 　2列目のPJ名にもコード接頭辞が足りない場合は付与してから正規化。
-    # *
-    # * ・再度末尾の空セルを削除し、
-    # * 　タブ区切りで 管轄PJ表_step0004.tsvに出力する。
-    # * 　この結果、元の管轄PJ表.tsvを上書きせず、
-    # * 　正規化済みの別ファイル（step0004）を生成する。
-    # *
-    # */
-    #
-    # 1. 管轄PJ表の再生成（step0004）
-    #
-    objOrgTableCsvPath: Path = Path(__file__).resolve().parent / "管轄PJ表.csv"
-    objOrgTableStep0004Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0004.tsv")
-    objOrgTableStep0003Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0003.tsv")
-    objOrgTableStep0005Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0005.tsv")
-    if objOrgTableCsvPath.exists():
-        with open(objOrgTableCsvPath, "r", encoding="utf-8") as objOrgTableCsvFile:
-            objOrgTableReader = csv.reader(objOrgTableCsvFile)
-            with open(objOrgTableStep0004Path, "w", encoding="utf-8") as objOrgTableTsvFile:
-                objOrgTableWriter = csv.writer(objOrgTableTsvFile, delimiter="\t", lineterminator="\n")
-                for objRow in objOrgTableReader:
-                    objRow = [objCell.replace("=match'", "") for objCell in objRow]
-                    while objRow and objRow[-1] == "":
-                        objRow.pop()
-                    if objRow and objRow[0] != "No":
-                        if len(objRow) >= 3:
-                            objRow[2] = normalize_org_table_project_code(objRow[2])
-                        if len(objRow) >= 2:
-                            pszProjectCodePrefix: str = ""
-                            if len(objRow) >= 3 and objRow[2]:
-                                pszProjectCodePrefix = objRow[2].split("_", 1)[0]
-                            pszProjectNameRaw: str = objRow[1]
-                            pszProjectNameTrimmed: str = pszProjectNameRaw.strip()
-                            if pszProjectCodePrefix and pszProjectNameTrimmed != pszProjectCodePrefix:
-                                if not pszProjectNameTrimmed.startswith(f"{pszProjectCodePrefix}_"):
-                                    objRow[1] = f"{pszProjectCodePrefix}_{pszProjectNameRaw}"
-                            objRow[1] = normalize_org_table_project_code(objRow[1])
-                    while objRow and objRow[-1] == "":
-                        objRow.pop()
-                    objOrgTableWriter.writerow(objRow)
-        if objOrgTableStep0003Path.exists():
-            with open(objOrgTableStep0003Path, "r", encoding="utf-8") as objOrgTableStep0003File:
-                objStep0003Reader = csv.reader(objOrgTableStep0003File, delimiter="\t")
-                with open(objOrgTableStep0005Path, "w", encoding="utf-8") as objOrgTableStep0005File:
-                    objStep0005Writer = csv.writer(
-                        objOrgTableStep0005File,
-                        delimiter="\t",
-                        lineterminator="\n",
-                    )
-
-                    for objRow in objStep0003Reader:
-                        if len(objRow) > 1:
-                            objRow = [objRow[0]] + objRow[2:]
-                        objRow = [objCell.replace("=match'", "") for objCell in objRow]
-                        while objRow and objRow[-1] == "":
-                            objRow.pop()
-                        objStep0005Writer.writerow(objRow)
-    else:
-        pszOrgTableError = f"Error: 管轄PJ表.csv が見つかりません。Path = {objOrgTableCsvPath}"
-        print(pszOrgTableError)
-        write_debug_error(pszOrgTableError, objBaseDirectoryPath)
-        objRoot = tk.Tk()
-        objRoot.withdraw()
-        messagebox.showwarning("警告", pszOrgTableError)
-        objRoot.destroy()
-
-    #
-    # 2. Sheet7/Sheet10 の生成と正規化
-    #
-    with open(pszSheet7TsvPath, "r", encoding="utf-8") as objSheet7File:
-        objSheet7Lines: List[str] = objSheet7File.readlines()
-    with open(pszSheet10CompanyTaskTsvPath, "r", encoding="utf-8") as objSheet10CompanyFile:
-        objSheet10CompanyLines: List[str] = objSheet10CompanyFile.readlines()
-
-    objSheet10Rows: List[Tuple[str, str]] = []
-    with open(pszSheet10ProjectTsvPath, "w", encoding="utf-8") as objSheet10File:
-        for pszLine in objSheet7Lines:
-            pszLineContent: str = pszLine.rstrip("\n")
-            if pszLineContent == "":
-                objSheet10File.write("\t\n")
-                objSheet10Rows.append(("", ""))
-                continue
-            pszLineContent = preprocess_line_content_sheet10(pszLineContent)
-            objColumns: List[str] = pszLineContent.split("\t")
-            pszProjectName: str = ""
-            pszManhour: str = ""
-            if len(objColumns) > 0:
-                pszProjectName = objColumns[0]
-            if len(objColumns) > 2:
-                pszManhour = objColumns[2]
-            elif len(objColumns) > 1:
-                pszManhour = objColumns[1]
-            if is_blank_sheet10(pszProjectName):
-                pszNormalizedName: str = ""
-            else:
-                pszNormalizedName = normalize_project_name_sheet10(pszProjectName)
-            objSheet10File.write(pszNormalizedName + "\t" + pszManhour + "\n")
-            objSheet10Rows.append((pszNormalizedName, pszManhour))
-
-    with open(pszSheet10CompanyTsvPath, "w", encoding="utf-8") as objSheet10CompanyFile:
-        for pszLine in objSheet10CompanyLines:
-            pszLineContent = pszLine.rstrip("\n")
-            if pszLineContent == "":
-                objSheet10CompanyFile.write("\t\t\n")
-                continue
-            pszLineContent = preprocess_line_content_sheet10(pszLineContent)
-            objColumns = pszLineContent.split("\t")
-            pszProjectName = ""
-            pszCompanyName = ""
-            pszManhour = ""
-            if len(objColumns) > 0:
-                pszProjectName = objColumns[0]
-            if len(objColumns) > 1:
-                pszCompanyName = objColumns[1]
-            if len(objColumns) > 3:
-                pszManhour = objColumns[3]
-            elif len(objColumns) > 2:
-                pszManhour = objColumns[2]
-            elif len(objColumns) > 1:
-                pszManhour = objColumns[1]
-            if is_blank_sheet10(pszProjectName):
-                pszNormalizedName = ""
-            else:
-                pszNormalizedName = normalize_project_name_sheet10(pszProjectName)
-            objSheet10CompanyFile.write(
-                pszNormalizedName + "\t" + pszCompanyName + "\t" + pszManhour + "\n",
-            )
-
-    objSheet10CompanyRows: List[Tuple[str, str, str]] = []
-    with open(pszSheet10CompanyTsvPath, "r", encoding="utf-8") as objSheet10CompanyFile:
-        for pszLine in objSheet10CompanyFile:
-            pszLineContent = pszLine.rstrip("\n")
-            if pszLineContent == "":
-                continue
-            objColumns = pszLineContent.split("\t")
-            pszProjectName = ""
-            pszCompanyName = ""
-            pszManhour = ""
-            if len(objColumns) > 0:
-                pszProjectName = objColumns[0]
-            if len(objColumns) > 1:
-                pszCompanyName = objColumns[1]
-            if len(objColumns) > 2:
-                pszManhour = objColumns[2]
-            objSheet10CompanyRows.append((pszProjectName, pszCompanyName, pszManhour))
-
-    objPrefixPatternStep06: re.Pattern[str] = re.compile(r"^(P\d{5}_|[A-OQ-Z]\d{3}_)")
-
-    def extract_prefix_and_suffix_step06(pszName: str) -> tuple[str, str]:
-        objMatch = objPrefixPatternStep06.match(pszName)
-        if objMatch is None:
-            return "", pszName
-        pszPrefix = objMatch.group(1)
-        return pszPrefix, pszName[len(pszPrefix) :]
-
-    objStep07PrefixToName: Dict[str, str] = {}
-    for pszProjectName, _, _ in objSheet10CompanyRows:
-        pszNameStep07: str = pszProjectName.strip()
-        if pszNameStep07 in ["本部", "その他"] or pszNameStep07 == "":
-            continue
-        pszPrefixStep07, _ = extract_prefix_and_suffix_step06(pszNameStep07)
-        if pszPrefixStep07 and pszPrefixStep07 not in objStep07PrefixToName:
-            objStep07PrefixToName[pszPrefixStep07] = pszNameStep07
-
-    objOrgTableStep0006DatedPath: Path = objOrgTableCsvPath.with_name(
-        f"管轄PJ表_step0006_{iFileYear}年{iFileMonth:02d}月.tsv"
-    )
-    if objOrgTableStep0005Path.exists():
-        with open(objOrgTableStep0005Path, "r", encoding="utf-8") as objStep0005File:
-            objStep0005Reader = csv.reader(objStep0005File, delimiter="\t")
-            with open(objOrgTableStep0006DatedPath, "w", encoding="utf-8") as objStep0006File:
-                objStep0006Writer = csv.writer(objStep0006File, delimiter="\t", lineterminator="\n")
-                for objRow in objStep0005Reader:
-                    if len(objRow) > 1:
-                        pszNameStep0005: str = objRow[1].strip()
-                        if pszNameStep0005 not in ["本部", "その他"]:
-                            pszPrefixStep0005, pszSuffixStep0005 = extract_prefix_and_suffix_step06(pszNameStep0005)
-                            if pszPrefixStep0005 and pszPrefixStep0005 in objStep07PrefixToName:
-                                pszNameStep07: str = objStep07PrefixToName[pszPrefixStep0005]
-                                _, pszSuffixStep07 = extract_prefix_and_suffix_step06(pszNameStep07)
-                                if pszSuffixStep0005 != pszSuffixStep07:
-                                    objRow[1] = pszNameStep07
-                    objStep0006Writer.writerow(objRow)
-
-    #
-    # 3. 集計（プロジェクト別、カンパニー別）
-    #
-    objAggregatedSeconds: Dict[str, int] = {}
-    objAggregatedOrder: List[str] = []
-    for pszProjectName, pszManhour in objSheet10Rows:
-        if pszProjectName == "" and pszManhour == "":
-            continue
-        iSeconds = parse_manhour_to_seconds_sheet11(pszManhour)
-        if pszProjectName not in objAggregatedSeconds:
-            objAggregatedSeconds[pszProjectName] = 0
-            objAggregatedOrder.append(pszProjectName)
-        objAggregatedSeconds[pszProjectName] += iSeconds
-
-    objSheet11Rows: List[Tuple[str, str]] = []
-    with open(pszSheet11TsvPath, "w", encoding="utf-8") as objSheet11File:
-        for pszProjectName in objAggregatedOrder:
-            pszTotalManhour: str = format_seconds_to_manhour_sheet11(
-                objAggregatedSeconds[pszProjectName],
-            )
-            objSheet11File.write(pszProjectName + "\t" + pszTotalManhour + "\n")
-            objSheet11Rows.append((pszProjectName, pszTotalManhour))
-
-    objAggregatedCompanySeconds: Dict[str, int] = {}
-    objAggregatedCompanyOrder: List[str] = []
-    objAggregatedCompanyNames: Dict[str, List[str]] = {}
-    for pszProjectName, pszCompanyName, pszManhour in objSheet10CompanyRows:
-        if pszProjectName == "" and pszCompanyName == "" and pszManhour == "":
-            continue
-        iSeconds = parse_manhour_to_seconds_sheet11(pszManhour)
-        if pszProjectName not in objAggregatedCompanySeconds:
-            objAggregatedCompanySeconds[pszProjectName] = 0
-            objAggregatedCompanyOrder.append(pszProjectName)
-            objAggregatedCompanyNames[pszProjectName] = []
-        if pszCompanyName not in objAggregatedCompanyNames[pszProjectName]:
-            objAggregatedCompanyNames[pszProjectName].append(pszCompanyName)
-        objAggregatedCompanySeconds[pszProjectName] += iSeconds
-
-    objIncubationPriority: List[str] = [
-        "第一インキュ",
-        "第二インキュ",
-        "第三インキュ",
-        "第四インキュ",
-    ]
-    objIncubationPrioritySet: set[str] = set(objIncubationPriority)
-    #
-    # 4. 計上カンパニーのマッピング読み込み
-    #
-    objOrgTableBillingMap: Dict[str, str] = {}
-    objOrgTableGroupMap: Dict[str, str] = {}
-    objOrgTableTsvPath: Path = objOrgTableCsvPath.with_suffix(".tsv")
-    if objOrgTableTsvPath.exists():
-        with open(objOrgTableTsvPath, "r", encoding="utf-8") as objOrgTableFile:
-            objOrgTableReader = csv.reader(objOrgTableFile, delimiter="\t")
-            for objRow in objOrgTableReader:
-                if len(objRow) >= 4:
-                    pszProjectCodeOrg: str = objRow[2].strip()
-                    pszBillingCompany: str = objRow[3].strip()
-                    pszBillingGroup: str = objRow[4].strip() if len(objRow) >= 5 else ""
-                    if pszProjectCodeOrg and (pszBillingCompany or pszBillingGroup):
-                        pszProjectCodePrefixMatchP: re.Match[str] | None = re.match(r"^(P\d{5}_)", pszProjectCodeOrg)
-                        pszProjectCodePrefixMatchOther: re.Match[str] | None = re.match(r"^([A-OQ-Z]\d{3}_)", pszProjectCodeOrg)
-                        pszProjectCodePrefix: str = ""
-                        if pszProjectCodePrefixMatchP is not None:
-                            pszProjectCodePrefix = pszProjectCodePrefixMatchP.group(1)
-                        elif pszProjectCodePrefixMatchOther is not None:
-                            pszProjectCodePrefix = pszProjectCodePrefixMatchOther.group(1)
-                        if pszProjectCodePrefix:
-                            if pszBillingCompany and pszProjectCodePrefix not in objOrgTableBillingMap:
-                                objOrgTableBillingMap[pszProjectCodePrefix] = pszBillingCompany
-                            if pszBillingGroup and pszProjectCodePrefix not in objOrgTableGroupMap:
-                                objOrgTableGroupMap[pszProjectCodePrefix] = pszBillingGroup
-    objHoldProjectLines: List[str] = []
-
-    #
-    # 5. 計上カンパニー名の決定ロジック（select_company_name_step08）
-    #
-    def select_company_name_step08(
-        pszProjectName: str,
-        objCompanyNames: List[str],
-    ) -> str:
-        if not objCompanyNames:
-            return ""
-        pszProjectCodePrefix: str = pszProjectName.split("_", 1)[0] + "_"
-        if pszProjectCodePrefix in objOrgTableBillingMap:
-            return objOrgTableBillingMap[pszProjectCodePrefix]
-        pszProjectPrefix: str = pszProjectName[:1]
-        if pszProjectPrefix in ["A", "H"]:
-            return "本部"
-        if pszProjectPrefix in ["J", "P"]:
-            objIncubations: List[str] = [
-                name for name in objCompanyNames if name in objIncubationPrioritySet
-            ]
-            objIncubations.sort(
-                key=lambda name: objIncubationPriority.index(name),
-            )
-            if len(objIncubations) > 1:
-                objHoldProjectLines.append(
-                    f"{pszProjectName} → {' / '.join(objCompanyNames)}",
-                )
-            if objIncubations:
-                return objIncubations[0]
-        return objCompanyNames[0]
-
-    #
-    # 6. カンパニー別合計TSVの出力
-    #
-    with open(pszSheet11CompanyTsvPath, "w", encoding="utf-8") as objSheet11CompanyFile:
-        objSheet11CompanyRows: List[Tuple[str, str, str]] = []
-        for pszProjectName in objAggregatedCompanyOrder:
-            pszTotalManhour = format_seconds_to_manhour_sheet11(
-                objAggregatedCompanySeconds[pszProjectName],
-            )
-            pszCompanyName = select_company_name_step08(
-                pszProjectName,
-                objAggregatedCompanyNames.get(pszProjectName, []),
-            )
-            objSheet11CompanyFile.write(
-                pszProjectName + "\t" + pszCompanyName + "\t" + pszTotalManhour + "\n",
-            )
-            objSheet11CompanyRows.append((pszProjectName, pszCompanyName, pszTotalManhour))
-
-    #
-    # 7. インキュ重複プロジェクトの警告出力
-    #
-    if objHoldProjectLines:
-        pszInputFileLine: str = f"入力ファイル名: {objInputPath.name}"
-        pszCompanyTsvLine: str = f"対象TSV: {pszSheet10CompanyTsvPath}"
-        print(pszInputFileLine)
-        print(pszCompanyTsvLine)
-        write_debug_error(pszInputFileLine, objBaseDirectoryPath)
-        write_debug_error(pszCompanyTsvLine, objBaseDirectoryPath)
-        for pszLine in objHoldProjectLines:
-            print(pszLine)
-            write_debug_error(pszLine, objBaseDirectoryPath)
-        objMessage = (
-            "インキュがかぶっているプロジェクトがあります。\n"
-            + pszInputFileLine
-            + "\n"
-            + pszCompanyTsvLine
-            + "\n"
-            + "\n".join(objHoldProjectLines)
+        objSelectedPairs.sort(
+            key=lambda objPair: extract_year_month_from_path(objPair[1])
+            or extract_year_month_from_path(objPair[0])
+            or (0, 0),
         )
-        objRoot = tk.Tk()
-        objRoot.withdraw()
-        messagebox.showwarning("警告", objMessage)
-        objRoot.destroy()
+    else:
+        objSelectedPairs = [objPair[:2] for objPair in objPairsWithMonths]
 
-    #
-    # 8. 最終ソート・出力
-    #
-    objIndexedSheet11Rows: List[Tuple[int, Tuple[str, str]]] = list(enumerate(objSheet11Rows))
-    objIndexedSheet11Rows.sort(
-        key=lambda objItem: (
-            extract_project_prefix_sheet12(objItem[1][0]),
-            objItem[0],
-        ),
-    )
-
-    with open(pszSheet12TsvPath, "w", encoding="utf-8") as objSheet12File:
-        for _, objRow in objIndexedSheet11Rows:
-            objSheet12File.write(objRow[0] + "\t" + objRow[1] + "\n")
-
-    objIndexedSheet11CompanyRows: List[Tuple[int, Tuple[str, str, str]]] = list(enumerate(objSheet11CompanyRows))
-    objIndexedSheet11CompanyRows.sort(
-        key=lambda objItem: (
-            extract_project_prefix_sheet12(objItem[1][0]),
-            objItem[0],
-        ),
-    )
-
-    with open(pszSheet12CompanyTsvPath, "w", encoding="utf-8") as objSheet12CompanyFile:
-        for _, objRow in objIndexedSheet11CompanyRows:
-            objSheet12CompanyFile.write(objRow[0] + "\t" + objRow[1] + "\t" + objRow[2] + "\n")
-
-    with open(pszSheet12CompanyGroupTsvPath, "w", encoding="utf-8") as objSheet12CompanyGroupFile:
-        for _, objRow in objIndexedSheet11CompanyRows:
-            pszProjectName, pszCompanyName, pszTotalManhour = objRow
-            pszProjectCodePrefix: str = pszProjectName.split("_", 1)[0] + "_"
-            pszBillingGroup: str = objOrgTableGroupMap.get(pszProjectCodePrefix, "")
-            objSheet12CompanyGroupFile.write(
-                pszProjectName
-                + "\t"
-                + pszCompanyName
-                + "\t"
-                + pszBillingGroup
-                + "\t"
-                + pszTotalManhour
-                + "\n",
-            )
-
-    pszStep10OutputPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step10_各プロジェクトの工数.tsv"
-    )
-    pszStep10CompanyOutputPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step10_各プロジェクトの計上カンパニー名_工数.tsv"
-    )
-    pszStep10CompanyGroupOutputPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step10_各プロジェクトの計上カンパニー名_計上グループ_工数.tsv"
-    )
-    pszStep11CompanyOutputPath: str = str(
-        objBaseDirectoryPath
-        / f"工数_{iFileYear}年{iFileMonth:02d}月_step11_各プロジェクトの計上カンパニー名_工数_カンパニーの工数.tsv"
-    )
-    with open(pszStep10OutputPath, "w", encoding="utf-8") as objStep10File:
-        for _, (pszProjectName, pszTotalManhour) in objIndexedSheet11Rows:
-            if str(pszProjectName).startswith(("A", "H")):
-                continue
-            objStep10File.write(pszProjectName + "\t" + pszTotalManhour + "\n")
-    with open(pszStep10CompanyOutputPath, "w", encoding="utf-8") as objStep10CompanyFile:
-        for _, (pszProjectName, pszCompanyName, pszTotalManhour) in objIndexedSheet11CompanyRows:
-            if str(pszProjectName).startswith(("A", "H")):
-                continue
-            objStep10CompanyFile.write(
-                pszProjectName + "\t" + pszCompanyName + "\t" + pszTotalManhour + "\n"
-            )
-    with open(pszStep10CompanyGroupOutputPath, "w", encoding="utf-8") as objStep10CompanyGroupFile:
-        for _, (pszProjectName, pszCompanyName, pszTotalManhour) in objIndexedSheet11CompanyRows:
-            if str(pszProjectName).startswith(("A", "H")):
-                continue
-            pszProjectCodePrefix_step10: str = pszProjectName.split("_", 1)[0] + "_"
-            pszBillingGroup_step10: str = objOrgTableGroupMap.get(pszProjectCodePrefix_step10, "")
-            objStep10CompanyGroupFile.write(
-                pszProjectName
-                + "\t"
-                + pszCompanyName
-                + "\t"
-                + pszBillingGroup_step10
-                + "\t"
-                + pszTotalManhour
-                + "\n"
-            )
-    with open(pszStep11CompanyOutputPath, "w", encoding="utf-8") as objStep11CompanyFile:
-        pszZeroManhour: str = "0:00:00"
-        for _, (pszProjectName, pszCompanyName, pszTotalManhour) in objIndexedSheet11CompanyRows:
-            if str(pszProjectName).startswith(("A", "H")):
-                continue
-            pszFirstIncubation: str = pszZeroManhour
-            pszSecondIncubation: str = pszZeroManhour
-            pszThirdIncubation: str = pszZeroManhour
-            pszFourthIncubation: str = pszZeroManhour
-            pszBusinessDevelopment: str = pszZeroManhour
-            bIsCompanyProject: bool = re.match(r"^C\d{3}_", str(pszProjectName)) is not None
-            if not bIsCompanyProject:
-                if pszCompanyName == "第一インキュ":
-                    pszFirstIncubation = pszTotalManhour
-                elif pszCompanyName == "第二インキュ":
-                    pszSecondIncubation = pszTotalManhour
-                elif pszCompanyName == "第三インキュ":
-                    pszThirdIncubation = pszTotalManhour
-                elif pszCompanyName == "第四インキュ":
-                    pszFourthIncubation = pszTotalManhour
-                elif pszCompanyName == "事業開発":
-                    pszBusinessDevelopment = pszTotalManhour
-            objStep11CompanyFile.write(
-                pszProjectName
-                + "\t"
-                + pszCompanyName
-                + "\t"
-                + pszTotalManhour
-                + "\t"
-                + pszFirstIncubation
-                + "\t"
-                + pszSecondIncubation
-                + "\t"
-                + pszThirdIncubation
-                + "\t"
-                + pszFourthIncubation
-                + "\t"
-                + pszBusinessDevelopment
-                + "\n"
-            )
-
-    #
-    # 9. 管轄PJ表_step0007.tsv の生成
-    #
-    objOrgTableStep0007Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0007.tsv")
-    objOrgTableStep0008Path: Path = objOrgTableCsvPath.with_name("管轄PJ表_step0008.tsv")
-    objOrgTableTsvPath: Path = objOrgTableCsvPath.with_suffix(".tsv")
-    if objOrgTableStep0003Path.exists():
-        shutil.copyfile(objOrgTableStep0003Path, objOrgTableStep0007Path)
-        objExistingProjectCodes: set[str] = set()
-        objExistingProjectCodeKeys: set[str] = set()
-        iMaxNo: int = 0
-        with open(objOrgTableStep0003Path, "r", encoding="utf-8") as objStep0003File:
-            objStep0003Reader = csv.reader(objStep0003File, delimiter="\t")
-            for objRow in objStep0003Reader:
-                if not objRow:
-                    continue
-                pszNoCandidate: str = objRow[0].strip()
-                if pszNoCandidate.isdigit():
-                    iMaxNo = max(iMaxNo, int(pszNoCandidate))
-                if len(objRow) >= 3:
-                    pszProjectCodeExisting: str = objRow[2].strip()
-                    if pszProjectCodeExisting:
-                        objExistingProjectCodes.add(pszProjectCodeExisting)
-                        objProjectCodeKeyMatch = re.match(
-                            r"^(P\d{5}_|[A-OQ-Z]\d{3}_)",
-                            pszProjectCodeExisting,
-                        )
-                        if objProjectCodeKeyMatch is not None:
-                            objExistingProjectCodeKeys.add(objProjectCodeKeyMatch.group(1))
-
-        iNextNo: int = iMaxNo + 1
-        with open(pszStep11CompanyOutputPath, "r", encoding="utf-8") as objStep11CompanyFile:
-            objStep11Reader = csv.reader(objStep11CompanyFile, delimiter="\t")
-            with open(objOrgTableStep0007Path, "a", encoding="utf-8") as objStep0007File:
-                objStep0007Writer = csv.writer(
-                    objStep0007File,
-                    delimiter="\t",
-                    lineterminator="\n",
-                )
-                for objRow in objStep11Reader:
-                    if len(objRow) < 2:
-                        continue
-                    pszProjectCode: str = objRow[0].strip()
-                    pszPostingCompany: str = objRow[1].strip() if len(objRow) >= 2 else ""
-                    objProjectCodeKeyMatch = re.match(r"^(P\d{5}_|[A-OQ-Z]\d{3}_)", pszProjectCode)
-                    pszProjectCodeKey: str | None = (
-                        objProjectCodeKeyMatch.group(1) if objProjectCodeKeyMatch is not None else None
-                    )
-                    if (
-                        not pszProjectCode
-                        or re.match(r"^C\d{3}_", pszProjectCode)
-                        or pszProjectCode in objExistingProjectCodes
-                        or (pszProjectCodeKey is not None and pszProjectCodeKey in objExistingProjectCodeKeys)
-                    ):
-                        continue
-                    objStep0007Writer.writerow(
-                        [
-                            str(iNextNo),
-                            pszProjectCode,
-                            pszProjectCode,
-                            pszPostingCompany,
-                            "",
-                        ]
-                    )
-                    objExistingProjectCodes.add(pszProjectCode)
-                    iNextNo += 1
-
-        with open(objOrgTableStep0007Path, "r", encoding="utf-8") as objStep0007File:
-            with open(objOrgTableStep0008Path, "w", encoding="utf-8") as objStep0008File:
-                for pszLine in objStep0007File:
-                    pszLineContent: str = pszLine.rstrip("\n")
-                    if pszLineContent.endswith("\t=match'"):
-                        pszLineContent = pszLineContent[: -len("\t=match'")]
-                    if pszLineContent.endswith("\t"):
-                        pszLineContent = pszLineContent[:-1]
-                    objStep0008File.write(pszLineContent + "\n")
-
-        if objOrgTableStep0008Path.exists() and objOrgTableStep0008Path != objOrgTableTsvPath:
-            shutil.copyfile(objOrgTableStep0008Path, objOrgTableTsvPath)
-
-    # Staff_List.tsv の処理は削除
-
-    pszRawDataTsvPath: str = str(objBaseDirectoryPath / "Raw_Data.tsv")
-
-    # With_Salary.tsv の処理は削除
-
-    generate_pj_summary_0005_files(objBaseDirectoryPath, iFileYear, iFileMonth)
-
-    print("OK: created files")
-    for objTsvPath in sorted(objBaseDirectoryPath.glob("*.tsv")):
-        print(str(objTsvPath))
-
-    return 0
-
-
-
-def load_org_table_billing_map_for_step11() -> Dict[str, str]:
-    objOrgTableCsvPath: Path = Path(__file__).resolve().parent / "管轄PJ表.csv"
-    objOrgTableTsvPath: Path = objOrgTableCsvPath.with_suffix(".tsv")
-    objOrgTableBillingMapExact: Dict[str, str] = {}
-    objOrgTableBillingMapPrefix: Dict[str, str] = {}
-    if objOrgTableTsvPath.exists():
-        with open(objOrgTableTsvPath, "r", encoding="utf-8") as objOrgTableFile:
-            objOrgTableReader = csv.reader(objOrgTableFile, delimiter="\t")
-            for objRow in objOrgTableReader:
-                if len(objRow) >= 4:
-                    pszProjectCodeOrg: str = objRow[2].strip()
-                    pszBillingCompany: str = objRow[3].strip()
-                    if pszProjectCodeOrg and pszBillingCompany:
-                        objOrgTableBillingMapExact.setdefault(pszProjectCodeOrg, pszBillingCompany)
-                        pszProjectCodePrefixMatchP: re.Match[str] | None = re.match(r"^(P\d{5}_)", pszProjectCodeOrg)
-                        pszProjectCodePrefixMatchOther: re.Match[str] | None = re.match(r"^([A-OQ-Z]\d{3}_)", pszProjectCodeOrg)
-                        pszProjectCodePrefix: str = ""
-                        if pszProjectCodePrefixMatchP is not None:
-                            pszProjectCodePrefix = pszProjectCodePrefixMatchP.group(1)
-                        elif pszProjectCodePrefixMatchOther is not None:
-                            pszProjectCodePrefix = pszProjectCodePrefixMatchOther.group(1)
-                        if pszProjectCodePrefix:
-                            objOrgTableBillingMapPrefix.setdefault(pszProjectCodePrefix, pszBillingCompany)
-    return {**objOrgTableBillingMapPrefix, **objOrgTableBillingMapExact}
-
-
-def write_step11_from_step10_only(pszStep10Path: str) -> int:
-    objStep10Path: Path = Path(pszStep10Path).resolve()
-    objBaseDirectoryPath: Path = objStep10Path.parent
-    objMatch: re.Match[str] | None = re.match(
-        r"工数_(\d{4})年(\d{2})月_step10_各プロジェクトの工数\.tsv$",
-        objStep10Path.name,
-    )
-    if objMatch is None:
-        print(f"Error: step10ファイル名の形式が不正です: {objStep10Path.name}")
+    if not objSelectedPairs:
+        print("Error: 採用範囲に合致する入力がありません。", file=sys.stderr)
         return 1
-    iFileYear: int = int(objMatch.group(1))
-    iFileMonth: int = int(objMatch.group(2))
 
-    pszStep11OutputPath: Path = objBaseDirectoryPath / f"工数_{iFileYear}年{iFileMonth:02d}月_step11_各プロジェクトの計上カンパニー名_工数_カンパニーの工数.tsv"
-    objBillingMap: Dict[str, str] = load_org_table_billing_map_for_step11()
+    pszRangeFileDirectory: str = os.path.dirname(objSelectedPairs[0][1])
+    pszRangePathSelected: str = ensure_selected_range_file(pszRangeFileDirectory, objSelectedRange)
+    record_created_file(pszRangePathSelected)
 
-    with open(objStep10Path, "r", encoding="utf-8") as objStep10File, open(
-        pszStep11OutputPath,
-        "w",
-        encoding="utf-8",
-    ) as objStep11File:
-        pszZeroManhour: str = "0:00:00"
-        for pszLine in objStep10File:
-            pszLineContent: str = pszLine.rstrip("\n")
-            if pszLineContent == "":
-                objStep11File.write("\n")
-                continue
-            objColumns: List[str] = pszLineContent.split("\t")
-            if len(objColumns) < 2:
-                print(f"Warning: 不正な行をスキップしました: {pszLineContent}")
-                continue
-            pszProjectName: str = objColumns[0]
-            pszBillingCompanyFromInput: str = objColumns[1] if len(objColumns) >= 3 else ""
-            pszManhour: str = objColumns[2] if len(objColumns) >= 3 else objColumns[1]
-            pszProjectCodePrefix: str = pszProjectName.split("_", 1)[0] + "_"
-            pszBillingCompany: str = pszBillingCompanyFromInput or objBillingMap.get(
-                pszProjectCodePrefix,
-                objBillingMap.get(pszProjectName, ""),
-            )
+    objPairs = objSelectedPairs
 
-            pszFirstIncubation: str = pszZeroManhour
-            pszSecondIncubation: str = pszZeroManhour
-            pszThirdIncubation: str = pszZeroManhour
-            pszFourthIncubation: str = pszZeroManhour
-            pszBusinessDevelopment: str = pszZeroManhour
-            bIsCompanyProject: bool = re.match(r"^C\d{3}_", str(pszProjectName)) is not None
-            if not bIsCompanyProject:
-                if pszBillingCompany == "第一インキュ":
-                    pszFirstIncubation = pszManhour
-                elif pszBillingCompany == "第二インキュ":
-                    pszSecondIncubation = pszManhour
-                elif pszBillingCompany == "第三インキュ":
-                    pszThirdIncubation = pszManhour
-                elif pszBillingCompany == "第四インキュ":
-                    pszFourthIncubation = pszManhour
-                elif pszBillingCompany == "事業開発":
-                    pszBusinessDevelopment = pszManhour
-            objStep11File.write(
-                pszProjectName
-                + "\t"
-                + pszBillingCompany
-                + "\t"
-                + pszManhour
-                + "\t"
-                + pszFirstIncubation
-                + "\t"
-                + pszSecondIncubation
-                + "\t"
-                + pszThirdIncubation
-                + "\t"
-                + pszFourthIncubation
-                + "\t"
-                + pszBusinessDevelopment
-                + "\n"
-            )
-    print(f"OK: created file {pszStep11OutputPath}")
+    for objPair in objPairs:
+        pszManhourPath: str = objPair[0]
+        pszPlPath: str = objPair[1]
+        pszOutputPath: str
+        if len(objPair) == 3:
+            pszOutputPath = objPair[2]
+        else:
+            pszOutputPath = build_default_output_path(pszPlPath)
+        pszOutputFinalPath: str = build_output_path_with_step(pszPlPath, "販管費配賦_")
+        pszOutputStep0001Path: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0001_")
+        pszOutputStep0002Path: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0002_")
+        pszOutputStep0003ZeroPath: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0003_")
+        pszOutputStep0003Path: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0007_")
+        pszOutputStep0004Path: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0008_")
+        pszOutputStep0009Path: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0009_")
+        pszOutputStep0005Path: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0005_")
+        pszOutputStep0006Path: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0006_")
+        pszOutputStep0010Path: str = build_output_path_with_step(pszPlPath, "販管費配賦_step0010_")
+
+        if not os.path.exists(pszManhourPath):
+            print(f"Input file not found: {pszManhourPath}")
+            return 1
+        if not os.path.exists(pszPlPath):
+            print(f"Input file not found: {pszPlPath}")
+            return 1
+
+        objManhourMap: Dict[str, str] = load_manhour_map(pszManhourPath)
+        objCompanyMap: Dict[str, str] = load_company_map(pszManhourPath)
+        process_pl_tsv(
+            pszPlPath,
+            pszOutputPath,
+            pszOutputStep0001Path,
+            pszOutputStep0002Path,
+            pszOutputStep0003ZeroPath,
+            pszOutputStep0003Path,
+            pszOutputStep0004Path,
+            pszOutputStep0009Path,
+            pszOutputStep0005Path,
+            pszOutputStep0006Path,
+            pszOutputStep0010Path,
+            pszOutputFinalPath,
+            objManhourMap,
+            objCompanyMap,
+        )
+
+        print(f"Output: {pszOutputStep0001Path}")
+        print(f"Output: {pszOutputStep0002Path}")
+        print(f"Output: {pszOutputStep0003ZeroPath}")
+        print(f"Output: {pszOutputStep0003Path}")
+        print(f"Output: {pszOutputStep0004Path}")
+        print(f"Output: {pszOutputStep0009Path}")
+        print(f"Output: {pszOutputStep0005Path}")
+        print(f"Output: {pszOutputStep0006Path}")
+        print(f"Output: {pszOutputStep0010Path}")
+        print(f"Output: {pszOutputFinalPath}")
+
+    if objPairs:
+        create_cumulative_reports(objPairs[0][1])
     return 0
-
-
-
-def load_org_table_billing_map_for_step11() -> Dict[str, str]:
-    objOrgTableCsvPath: Path = Path(__file__).resolve().parent / "管轄PJ表.csv"
-    objOrgTableTsvPath: Path = objOrgTableCsvPath.with_suffix(".tsv")
-    objOrgTableBillingMapExact: Dict[str, str] = {}
-    objOrgTableBillingMapPrefix: Dict[str, str] = {}
-    if objOrgTableTsvPath.exists():
-        with open(objOrgTableTsvPath, "r", encoding="utf-8") as objOrgTableFile:
-            objOrgTableReader = csv.reader(objOrgTableFile, delimiter="\t")
-            for objRow in objOrgTableReader:
-                if len(objRow) >= 4:
-                    pszProjectCodeOrg: str = objRow[2].strip()
-                    pszBillingCompany: str = objRow[3].strip()
-                    if pszProjectCodeOrg and pszBillingCompany:
-                        objOrgTableBillingMapExact.setdefault(pszProjectCodeOrg, pszBillingCompany)
-                        pszProjectCodePrefixMatchP: re.Match[str] | None = re.match(r"^(P\d{5}_)", pszProjectCodeOrg)
-                        pszProjectCodePrefixMatchOther: re.Match[str] | None = re.match(r"^([A-OQ-Z]\d{3}_)", pszProjectCodeOrg)
-                        pszProjectCodePrefix: str = ""
-                        if pszProjectCodePrefixMatchP is not None:
-                            pszProjectCodePrefix = pszProjectCodePrefixMatchP.group(1)
-                        elif pszProjectCodePrefixMatchOther is not None:
-                            pszProjectCodePrefix = pszProjectCodePrefixMatchOther.group(1)
-                        if pszProjectCodePrefix:
-                            objOrgTableBillingMapPrefix.setdefault(pszProjectCodePrefix, pszBillingCompany)
-    return {**objOrgTableBillingMapPrefix, **objOrgTableBillingMapExact}
-
-def main() -> int:
-    objParser: argparse.ArgumentParser = argparse.ArgumentParser()
-    objParser.add_argument(
-        "pszInputManhourCsvPaths",
-        nargs="+",
-        help="Input Jobcan manhour CSV file paths",
-    )
-    objArgs: argparse.Namespace = objParser.parse_args()
-
-    convert_org_table_tsv(Path(__file__).resolve().parent)
-
-    iExitCode: int = 0
-    for pszInputManhourCsvPath in objArgs.pszInputManhourCsvPaths:
-        if re.match(
-            r".*工数_\d{4}年\d{2}月_step10_各プロジェクトの工数\.tsv$",
-            pszInputManhourCsvPath,
-        ):
-            try:
-                iResultStep10Only: int = write_step11_from_step10_only(pszInputManhourCsvPath)
-            except Exception as objException:
-                print(
-                    "Error: failed to process step10 TSV input: {0}. Detail = {1}".format(
-                        pszInputManhourCsvPath,
-                        objException,
-                    )
-                )
-                iExitCode = 1
-                continue
-            if iResultStep10Only != 0:
-                iExitCode = 1
-            continue
-        try:
-            iResult: int = process_single_input(pszInputManhourCsvPath)
-        except Exception as objException:
-            print(
-                "Error: failed to process input file: {0}. Detail = {1}".format(
-                    pszInputManhourCsvPath,
-                    objException,
-                )
-            )
-            iExitCode = 1
-            continue
-        if iResult != 0:
-            iExitCode = 1
-
-    return iExitCode
 
 
 if __name__ == "__main__":
-    iExitCode: int = main()
-    raise SystemExit(iExitCode)
+    sys.exit(main(sys.argv))
