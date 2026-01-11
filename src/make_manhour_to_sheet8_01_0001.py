@@ -92,6 +92,8 @@ def copy_pj_summary_0005_files(objBaseDirectoryPath: Path, iYear: int, iMonth: i
     for pszSourceName, pszDestinationName in objCopyPairs:
         objSourcePath: Path = objBaseDirectoryPath / pszSourceName
         objDestinationPath: Path = objBaseDirectoryPath / pszDestinationName
+        if objDestinationPath.exists():
+            continue
         if objSourcePath.exists():
             shutil.copyfile(objSourcePath, objDestinationPath)
 

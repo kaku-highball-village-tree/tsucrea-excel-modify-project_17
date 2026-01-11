@@ -2523,6 +2523,16 @@ def create_pj_summary(
     )
     write_tsv_rows(pszSingleSummaryPath, objSingleSummaryRows)
     write_tsv_rows(pszCumulativeSummaryPath, objCumulativeSummaryRows)
+    pszSingleSummaryPath0005: str = os.path.join(
+        pszDirectory,
+        f"0005_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    pszCumulativeSummaryPath0005: str = os.path.join(
+        pszDirectory,
+        f"0005_PJサマリ_step0001_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszSingleSummaryPath0005, objSingleSummaryRows)
+    write_tsv_rows(pszCumulativeSummaryPath0005, objCumulativeSummaryRows)
 
     objSingleStep0002Rows = combine_company_sg_admin_columns(
         read_tsv_rows(pszSingleSummaryPath)
