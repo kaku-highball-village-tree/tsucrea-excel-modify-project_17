@@ -2531,6 +2531,7 @@ def create_pj_summary(
         pszDirectory,
         f"0005_PJサマリ_step0001_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
+    # 0005 は step0001 のみ作成する（step0002 以降は生成しない）。
     write_tsv_rows(pszSingleSummaryPath0005, objSingleSummaryRows)
     write_tsv_rows(pszCumulativeSummaryPath0005, objCumulativeSummaryRows)
 
