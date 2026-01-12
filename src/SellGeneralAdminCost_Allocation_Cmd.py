@@ -2573,6 +2573,18 @@ def create_pj_summary(
         ),
     )
     write_tsv_rows(pszCumulativeSummaryPathCp, objCumulativeSummaryRows)
+    pszCumulativeSummaryStep0002PathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0002_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    objCumulativeSummaryStep0002RowsCp = combine_company_sg_admin_columns(
+        read_tsv_rows(pszCumulativeSummaryPathCp)
+    )
+    write_tsv_rows(pszCumulativeSummaryStep0002PathCp, objCumulativeSummaryStep0002RowsCp)
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
