@@ -1458,6 +1458,72 @@ def append_gross_margin_column(objRows: List[List[str]]) -> List[List[str]]:
     return objOutputRows
 
 
+def insert_ratio_rows_for_vertical(
+    objRows: List[List[str]],
+) -> List[List[str]]:
+    if not objRows:
+        return []
+
+    objBaseRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    iSalesRowIndex: int = find_row_index_by_name(objBaseRows, "純売上高")
+    if iSalesRowIndex < 0:
+        return objBaseRows
+
+    objSalesRow: List[str] = objBaseRows[iSalesRowIndex]
+
+    def build_ratio_row(
+        pszTargetName: str,
+        pszRatioName: str,
+    ) -> Optional[Tuple[int, List[str]]]:
+        iTargetRowIndex: int = find_row_index_by_name(objBaseRows, pszTargetName)
+        if iTargetRowIndex < 0:
+            return None
+        objTargetRow: List[str] = objBaseRows[iTargetRowIndex]
+        iColumnCount: int = max(len(objSalesRow), len(objTargetRow))
+        objRatioRow: List[str] = [pszRatioName] + [""] * max(iColumnCount - 1, 0)
+        for iColumnIndex in range(1, iColumnCount):
+            fSales: float = 0.0
+            fTarget: float = 0.0
+            if iColumnIndex < len(objSalesRow):
+                fSales = parse_number(objSalesRow[iColumnIndex])
+            if iColumnIndex < len(objTargetRow):
+                fTarget = parse_number(objTargetRow[iColumnIndex])
+
+            if abs(fSales) < 0.0000001:
+                if fTarget > 0.0:
+                    objRatioRow[iColumnIndex] = "'＋∞"
+                elif fTarget < 0.0:
+                    objRatioRow[iColumnIndex] = "'－∞"
+                else:
+                    objRatioRow[iColumnIndex] = "0.0000"
+                continue
+            objRatioRow[iColumnIndex] = f"{fTarget / fSales:.4f}"
+        return iTargetRowIndex, objRatioRow
+
+    objInsertions: List[Tuple[int, List[str]]] = []
+    for pszTargetName, pszRatioName in [
+        ("売上総利益", "売上総利益率"),
+        ("営業利益", "営業利益率"),
+    ]:
+        objResult = build_ratio_row(pszTargetName, pszRatioName)
+        if objResult is not None:
+            objInsertions.append(objResult)
+
+    objInsertions.sort(key=lambda objItem: objItem[0])
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objBaseRows]
+    iOffset: int = 0
+    for iTargetRowIndex, objRatioRow in objInsertions:
+        iInsertIndex: int = iTargetRowIndex + 1 + iOffset
+        if iInsertIndex < 0:
+            iInsertIndex = 0
+        if iInsertIndex > len(objOutputRows):
+            iInsertIndex = len(objOutputRows)
+        objOutputRows.insert(iInsertIndex, objRatioRow)
+        iOffset += 1
+
+    return objOutputRows
+
+
 def build_report_file_path(
     pszDirectory: str,
     pszPrefix: str,
@@ -1831,7 +1897,7 @@ def load_org_table_group_map(pszOrgTablePath: str) -> Dict[str, str]:
 
     objHeader = objRows[0]
     iCodeIndex = find_column_index(objHeader, "PJコード")
-    objGroupColumnCandidates = ["計上グループ名", "計上グループ"]
+    objGroupColumnCandidates = ["計上グループ名", "計上グループ", "計上カンパニー名", "計上カンパニー"]
     iGroupIndex = -1
     for pszColumn in objGroupColumnCandidates:
         iGroupIndex = find_column_index(objHeader, pszColumn)
@@ -2552,6 +2618,7 @@ def create_pj_summary(
         "3Cカンパニー販管費",
         "4Cカンパニー販管費",
         "事業開発カンパニー販管費",
+        "営業利益",
     ]
     objSingleSummaryRows: List[List[str]] = filter_rows_by_columns(
         objSingleRows,
@@ -2560,6 +2627,100 @@ def create_pj_summary(
     objCumulativeSummaryRows: List[List[str]] = filter_rows_by_columns(
         objCumulativeRows,
         objSummaryTargetColumns,
+    )
+    pszSummaryStartMonth: str = f"{objStart[1]:02d}"
+    pszSummaryEndMonth: str = f"{objEnd[1]:02d}"
+    pszCumulativeSummaryPathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0001_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    write_tsv_rows(pszCumulativeSummaryPathCp, objCumulativeSummaryRows)
+    pszCumulativeSummaryPathCp0002: str = os.path.join(
+        pszDirectory,
+        (
+            "0002_CP別_step0001_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    write_tsv_rows(pszCumulativeSummaryPathCp0002, objCumulativeSummaryRows)
+    pszCumulativeSummaryStep0002PathCp0002: str = os.path.join(
+        pszDirectory,
+        (
+            "0002_CP別_step0002_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    objCumulativeSummaryStep0002RowsCp0002 = combine_company_sg_admin_columns(
+        read_tsv_rows(pszCumulativeSummaryPathCp0002)
+    )
+    write_tsv_rows(pszCumulativeSummaryStep0002PathCp0002, objCumulativeSummaryStep0002RowsCp0002)
+    pszCumulativeSummaryStep0002PathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0002_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    objCumulativeSummaryStep0002RowsCp = combine_company_sg_admin_columns(
+        read_tsv_rows(pszCumulativeSummaryPathCp)
+    )
+    write_tsv_rows(pszCumulativeSummaryStep0002PathCp, objCumulativeSummaryStep0002RowsCp)
+    pszCumulativeSummaryStep0003PathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0003_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    objGroupMapCp = load_org_table_group_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+    objCumulativeSummaryStep0003RowsCp = build_step0003_rows(
+        read_tsv_rows(pszCumulativeSummaryStep0002PathCp),
+        objGroupMapCp,
+    )
+    write_tsv_rows(pszCumulativeSummaryStep0003PathCp, objCumulativeSummaryStep0003RowsCp)
+    pszCumulativeSummaryStep0004PathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0004_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    objCumulativeSummaryStep0004RowsCp = build_step0004_rows_for_summary(
+        objCumulativeSummaryStep0003RowsCp
+    )
+    write_tsv_rows(pszCumulativeSummaryStep0004PathCp, objCumulativeSummaryStep0004RowsCp)
+    pszCumulativeSummaryStep0004VerticalPathCp: str = pszCumulativeSummaryStep0004PathCp.replace(
+        ".tsv",
+        "_vertical.tsv",
+    )
+    objCumulativeSummaryStep0004VerticalRowsCp = transpose_rows(objCumulativeSummaryStep0004RowsCp)
+    write_tsv_rows(
+        pszCumulativeSummaryStep0004VerticalPathCp,
+        objCumulativeSummaryStep0004VerticalRowsCp,
+    )
+    objCumulativeSummaryStep0005VerticalRowsCp = insert_ratio_rows_for_vertical(
+        objCumulativeSummaryStep0004VerticalRowsCp
+    )
+    pszCumulativeSummaryStep0005VerticalPathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0005_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月_vertical.tsv"
+        ),
+    )
+    write_tsv_rows(
+        pszCumulativeSummaryStep0005VerticalPathCp,
+        objCumulativeSummaryStep0005VerticalRowsCp,
     )
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
