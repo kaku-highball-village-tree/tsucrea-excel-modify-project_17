@@ -2531,8 +2531,8 @@ def create_pj_summary(
         pszDirectory,
         f"0005_PJサマリ_step0001_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    # 0005 は step0001 のみ作成する（step0002 以降は生成しない）。
-    # copy_pj_summary_0005_files によるコピーも行わない前提とする。
+    # 0005 は copy_pj_summary_0005_files によるコピーを行わず、
+    # step0001 以降は必要なステップを本関数内で作成する。
     write_tsv_rows(pszSingleSummaryPath0005, objSingleSummaryRows)
     write_tsv_rows(pszCumulativeSummaryPath0005, objCumulativeSummaryRows)
 
@@ -2590,6 +2590,24 @@ def create_pj_summary(
     )
     write_tsv_rows(pszSingleStep0003Path, objSingleStep0003Rows)
     write_tsv_rows(pszCumulativeStep0003Path, objCumulativeStep0003Rows)
+    objSingleStep0003Rows0005 = build_step0003_rows(
+        read_tsv_rows(pszSingleStep0002Path0005),
+        objCompanyMap,
+    )
+    objCumulativeStep0003Rows0005 = build_step0003_rows(
+        read_tsv_rows(pszCumulativeStep0002Path0005),
+        objCompanyMap,
+    )
+    pszSingleStep0003Path0005: str = os.path.join(
+        pszDirectory,
+        f"0005_PJサマリ_step0003_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    pszCumulativeStep0003Path0005: str = os.path.join(
+        pszDirectory,
+        f"0005_PJサマリ_step0003_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszSingleStep0003Path0005, objSingleStep0003Rows0005)
+    write_tsv_rows(pszCumulativeStep0003Path0005, objCumulativeStep0003Rows0005)
     pszSingleStep0004Path: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0004_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
