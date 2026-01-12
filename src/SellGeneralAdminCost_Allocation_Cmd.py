@@ -3720,8 +3720,7 @@ def create_cumulative_reports(pszPlPath: str) -> None:
             pszInputPrefix="損益計算書_販管費配賦",
         )
         create_cumulative_report(pszDirectory, "製造原価報告書", objRangeItem)
-        objPjSummaryRange = build_pj_summary_range(objRangeItem)
-        create_pj_summary(pszPlPath, objPjSummaryRange)
+        create_pj_summary(pszPlPath, objRangeItem)
 
 
 def main(argv: list[str]) -> int:
