@@ -1897,7 +1897,7 @@ def load_org_table_group_map(pszOrgTablePath: str) -> Dict[str, str]:
 
     objHeader = objRows[0]
     iCodeIndex = find_column_index(objHeader, "PJコード")
-    objGroupColumnCandidates = ["計上グループ名", "計上グループ", "計上カンパニー名", "計上カンパニー"]
+    objGroupColumnCandidates = ["計上グループ名", "計上グループ"]
     iGroupIndex = -1
     for pszColumn in objGroupColumnCandidates:
         iGroupIndex = find_column_index(objHeader, pszColumn)
