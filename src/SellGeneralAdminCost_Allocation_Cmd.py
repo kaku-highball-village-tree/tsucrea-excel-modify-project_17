@@ -2811,6 +2811,11 @@ def create_pj_summary(
             pszSingleSummaryStep0005VerticalPathCp,
             objSingleSummaryStep0005VerticalRowsCp,
         )
+        move_cp_step0001_to_step0004_vertical_files(
+            pszDirectory,
+            objStart,
+            objEnd,
+        )
     pszCumulativeSummaryStep0005VerticalPathCp: Optional[str] = None
     if objCumulativeRows is not None:
         objCumulativeSummaryRows: List[List[str]] = filter_rows_by_columns(
@@ -2960,6 +2965,11 @@ def create_pj_summary(
         write_tsv_rows(
             pszCumulativeSummaryStep0005VerticalPathCp,
             objCumulativeSummaryStep0005VerticalRowsCp,
+        )
+        move_cp_step0001_to_step0004_vertical_files(
+            pszDirectory,
+            objStart,
+            objEnd,
         )
     copy_cp_step0005_vertical_files(
         pszDirectory,
@@ -3891,6 +3901,43 @@ def copy_cp_step0005_vertical_files(pszDirectory: str, objPaths: List[Optional[s
         pszFileName: str = os.path.basename(pszPath)
         pszTargetPath: str = os.path.join(pszTargetDirectory, pszFileName)
         shutil.copy2(pszPath, pszTargetPath)
+
+
+def move_cp_step0001_to_step0004_vertical_files(
+    pszDirectory: str,
+    objStart: Tuple[int, int],
+    objEnd: Tuple[int, int],
+) -> None:
+    pszTargetDirectory: str = os.path.join(pszDirectory, "temp")
+    os.makedirs(pszTargetDirectory, exist_ok=True)
+    iStartYear, iStartMonth = objStart
+    iEndYear, iEndMonth = objEnd
+    pszStartMonth: str = f"{iStartMonth:02d}"
+    pszEndMonth: str = f"{iEndMonth:02d}"
+    objTargets: List[str] = []
+    if objStart == objEnd:
+        for pszStep in ("step0001", "step0002", "step0003", "step0004"):
+            objTargets.append(
+                os.path.join(
+                    pszDirectory,
+                    f"0001_CP別_{pszStep}_単月_損益計算書_{iEndYear}年{pszEndMonth}月_vertical.tsv",
+                )
+            )
+    for pszStep in ("step0001", "step0002", "step0003", "step0004"):
+        objTargets.append(
+            os.path.join(
+                pszDirectory,
+                (
+                    f"0001_CP別_{pszStep}_累計_損益計算書_"
+                    f"{iStartYear}年{pszStartMonth}月-{iEndYear}年{pszEndMonth}月_vertical.tsv"
+                ),
+            )
+        )
+    for pszPath in objTargets:
+        if not os.path.isfile(pszPath):
+            continue
+        pszTargetPath: str = os.path.join(pszTargetDirectory, os.path.basename(pszPath))
+        shutil.move(pszPath, pszTargetPath)
 
 
 def main(argv: list[str]) -> int:
