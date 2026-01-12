@@ -1897,7 +1897,7 @@ def load_org_table_group_map(pszOrgTablePath: str) -> Dict[str, str]:
 
     objHeader = objRows[0]
     iCodeIndex = find_column_index(objHeader, "PJコード")
-    objGroupColumnCandidates = ["計上グループ名", "計上グループ", "計上カンパニー名", "計上カンパニー"]
+    objGroupColumnCandidates = ["計上グループ名", "計上グループ"]
     iGroupIndex = -1
     for pszColumn in objGroupColumnCandidates:
         iGroupIndex = find_column_index(objHeader, pszColumn)
@@ -2660,6 +2660,14 @@ def create_pj_summary(
         read_tsv_rows(pszCumulativeSummaryPathCp0002)
     )
     write_tsv_rows(pszCumulativeSummaryStep0002PathCp0002, objCumulativeSummaryStep0002RowsCp0002)
+    pszCumulativeSummaryStep0003PathCp0002: str = os.path.join(
+        pszDirectory,
+        (
+            "0002_CP別_step0003_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
     pszCumulativeSummaryStep0002PathCp: str = os.path.join(
         pszDirectory,
         (
@@ -2681,6 +2689,11 @@ def create_pj_summary(
         ),
     )
     objGroupMapCp = load_org_table_group_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+    objCumulativeSummaryStep0003RowsCp0002 = build_step0003_rows(
+        read_tsv_rows(pszCumulativeSummaryStep0002PathCp0002),
+        objGroupMapCp,
+    )
+    write_tsv_rows(pszCumulativeSummaryStep0003PathCp0002, objCumulativeSummaryStep0003RowsCp0002)
     objCumulativeSummaryStep0003RowsCp = build_step0003_rows(
         read_tsv_rows(pszCumulativeSummaryStep0002PathCp),
         objGroupMapCp,
