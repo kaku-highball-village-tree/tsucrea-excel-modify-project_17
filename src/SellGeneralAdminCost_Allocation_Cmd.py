@@ -2966,6 +2966,12 @@ def create_pj_summary(
             pszCumulativeSummaryStep0005VerticalPathCp,
             objCumulativeSummaryStep0005VerticalRowsCp,
         )
+        if objStart != objEnd and objStart[1] in (4, 9):
+            create_empty_previous_fiscal_cp_step0005_vertical(
+                pszDirectory,
+                objStart,
+                objEnd,
+            )
         move_cp_step0001_to_step0004_vertical_files(
             pszDirectory,
             objStart,
@@ -3938,6 +3944,66 @@ def move_cp_step0001_to_step0004_vertical_files(
             continue
         pszTargetPath: str = os.path.join(pszTargetDirectory, os.path.basename(pszPath))
         shutil.move(pszPath, pszTargetPath)
+
+
+def create_empty_previous_fiscal_cp_step0005_vertical(
+    pszDirectory: str,
+    objStart: Tuple[int, int],
+    objEnd: Tuple[int, int],
+) -> None:
+    iStartYear, iStartMonth = objStart
+    iEndYear, iEndMonth = objEnd
+    if iStartMonth == 4:
+        iPriorStartYear = iStartYear - 1
+        iPriorStartMonth = 4
+        iPriorEndYear = iStartYear
+        iPriorEndMonth = 3
+    elif iStartMonth == 9:
+        iPriorStartYear = iStartYear - 1
+        iPriorStartMonth = 9
+        iPriorEndYear = iStartYear
+        iPriorEndMonth = 8
+    else:
+        return
+
+    pszTemplatePath: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0005_累計_損益計算書_"
+            f"{iStartYear}年{iStartMonth:02d}月-"
+            f"{iEndYear}年{iEndMonth:02d}月_vertical.tsv"
+        ),
+    )
+    pszTargetPath: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0005_累計_損益計算書_"
+            f"{iPriorStartYear}年{iPriorStartMonth:02d}月-"
+            f"{iPriorEndYear}年{iPriorEndMonth:02d}月_vertical.tsv"
+        ),
+    )
+    if not os.path.isfile(pszTemplatePath):
+        return
+    if os.path.isfile(pszTargetPath):
+        return
+
+    objRows = read_tsv_rows(pszTemplatePath)
+    if not objRows:
+        return
+    objOutputRows: List[List[str]] = []
+    for iRowIndex, objRow in enumerate(objRows):
+        if iRowIndex == 0:
+            objOutputRows.append(list(objRow))
+            continue
+        if not objRow:
+            objOutputRows.append([])
+            continue
+        pszLabel: str = objRow[0]
+        if pszLabel in ("売上総利益率", "営業利益率"):
+            objOutputRows.append([pszLabel] + ["0.0"] * (len(objRow) - 1))
+        else:
+            objOutputRows.append([pszLabel] + ["0"] * (len(objRow) - 1))
+    write_tsv_rows(pszTargetPath, objOutputRows)
 
 
 def main(argv: list[str]) -> int:
