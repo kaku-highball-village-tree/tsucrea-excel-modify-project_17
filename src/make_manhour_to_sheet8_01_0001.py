@@ -2319,7 +2319,7 @@ def make_sheet789_from_sheet4(
     elif "氏名" in objSheet4Columns:
         pszNameColumn = "氏名"
 
-    # 計上カンパニー列の候補を探す（旧: 計上グループ名/所属グループ名に準拠）
+    # 計上カンパニー列の候補を探す（旧: 計上グループ名/所属グループ名に準拠）。
     pszCompanyColumn: str = ""
     if "計上カンパニー名" in objSheet4Columns:
         pszCompanyColumn = "計上カンパニー名"

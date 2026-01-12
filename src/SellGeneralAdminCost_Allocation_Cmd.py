@@ -1458,6 +1458,72 @@ def append_gross_margin_column(objRows: List[List[str]]) -> List[List[str]]:
     return objOutputRows
 
 
+def insert_ratio_rows_for_vertical(
+    objRows: List[List[str]],
+) -> List[List[str]]:
+    if not objRows:
+        return []
+
+    objBaseRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    iSalesRowIndex: int = find_row_index_by_name(objBaseRows, "純売上高")
+    if iSalesRowIndex < 0:
+        return objBaseRows
+
+    objSalesRow: List[str] = objBaseRows[iSalesRowIndex]
+
+    def build_ratio_row(
+        pszTargetName: str,
+        pszRatioName: str,
+    ) -> Optional[Tuple[int, List[str]]]:
+        iTargetRowIndex: int = find_row_index_by_name(objBaseRows, pszTargetName)
+        if iTargetRowIndex < 0:
+            return None
+        objTargetRow: List[str] = objBaseRows[iTargetRowIndex]
+        iColumnCount: int = max(len(objSalesRow), len(objTargetRow))
+        objRatioRow: List[str] = [pszRatioName] + [""] * max(iColumnCount - 1, 0)
+        for iColumnIndex in range(1, iColumnCount):
+            fSales: float = 0.0
+            fTarget: float = 0.0
+            if iColumnIndex < len(objSalesRow):
+                fSales = parse_number(objSalesRow[iColumnIndex])
+            if iColumnIndex < len(objTargetRow):
+                fTarget = parse_number(objTargetRow[iColumnIndex])
+
+            if abs(fSales) < 0.0000001:
+                if fTarget > 0.0:
+                    objRatioRow[iColumnIndex] = "'＋∞"
+                elif fTarget < 0.0:
+                    objRatioRow[iColumnIndex] = "'－∞"
+                else:
+                    objRatioRow[iColumnIndex] = "0.0000"
+                continue
+            objRatioRow[iColumnIndex] = f"{fTarget / fSales:.4f}"
+        return iTargetRowIndex, objRatioRow
+
+    objInsertions: List[Tuple[int, List[str]]] = []
+    for pszTargetName, pszRatioName in [
+        ("売上総利益", "売上総利益率"),
+        ("営業利益", "営業利益率"),
+    ]:
+        objResult = build_ratio_row(pszTargetName, pszRatioName)
+        if objResult is not None:
+            objInsertions.append(objResult)
+
+    objInsertions.sort(key=lambda objItem: objItem[0])
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objBaseRows]
+    iOffset: int = 0
+    for iTargetRowIndex, objRatioRow in objInsertions:
+        iInsertIndex: int = iTargetRowIndex + 1 + iOffset
+        if iInsertIndex < 0:
+            iInsertIndex = 0
+        if iInsertIndex > len(objOutputRows):
+            iInsertIndex = len(objOutputRows)
+        objOutputRows.insert(iInsertIndex, objRatioRow)
+        iOffset += 1
+
+    return objOutputRows
+
+
 def build_report_file_path(
     pszDirectory: str,
     pszPrefix: str,
@@ -2619,6 +2685,21 @@ def create_pj_summary(
     write_tsv_rows(
         pszCumulativeSummaryStep0004VerticalPathCp,
         objCumulativeSummaryStep0004VerticalRowsCp,
+    )
+    objCumulativeSummaryStep0005VerticalRowsCp = insert_ratio_rows_for_vertical(
+        objCumulativeSummaryStep0004VerticalRowsCp
+    )
+    pszCumulativeSummaryStep0005VerticalPathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0005_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月_vertical.tsv"
+        ),
+    )
+    write_tsv_rows(
+        pszCumulativeSummaryStep0005VerticalPathCp,
+        objCumulativeSummaryStep0005VerticalRowsCp,
     )
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
