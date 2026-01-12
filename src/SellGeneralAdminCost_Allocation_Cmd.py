@@ -1820,38 +1820,38 @@ def combine_company_sg_admin_columns(
     return objOutputRows
 
 
-def load_org_table_company_map(pszOrgTablePath: str) -> Dict[str, str]:
-    objCompanyMap: Dict[str, str] = {}
+def load_org_table_group_map(pszOrgTablePath: str) -> Dict[str, str]:
+    objGroupMap: Dict[str, str] = {}
     if not os.path.isfile(pszOrgTablePath):
-        return objCompanyMap
+        return objGroupMap
 
     objRows = read_tsv_rows(pszOrgTablePath)
     if not objRows:
-        return objCompanyMap
+        return objGroupMap
 
     objHeader = objRows[0]
     iCodeIndex = find_column_index(objHeader, "PJコード")
-    objCompanyColumnCandidates = ["計上カンパニー名", "計上カンパニー"]
-    iCompanyIndex = -1
-    for pszColumn in objCompanyColumnCandidates:
-        iCompanyIndex = find_column_index(objHeader, pszColumn)
-        if iCompanyIndex >= 0:
+    objGroupColumnCandidates = ["計上グループ名", "計上グループ"]
+    iGroupIndex = -1
+    for pszColumn in objGroupColumnCandidates:
+        iGroupIndex = find_column_index(objHeader, pszColumn)
+        if iGroupIndex >= 0:
             break
 
     iStartIndex = 0
     if iCodeIndex >= 0:
-        if iCompanyIndex < 0:
-            iCompanyIndex = iCodeIndex + 1
+        if iGroupIndex < 0:
+            iGroupIndex = iCodeIndex + 2
         iStartIndex = 1
     else:
         iCodeIndex = 2
-        iCompanyIndex = 3
+        iGroupIndex = 4
 
     for objRow in objRows[iStartIndex:]:
-        if iCodeIndex >= len(objRow) or iCompanyIndex >= len(objRow):
+        if iCodeIndex >= len(objRow) or iGroupIndex >= len(objRow):
             continue
         pszProjectCode: str = objRow[iCodeIndex].strip()
-        pszCompanyName: str = objRow[iCompanyIndex].strip()
+        pszGroupName: str = objRow[iGroupIndex].strip()
         if not pszProjectCode:
             continue
 
@@ -1863,15 +1863,15 @@ def load_org_table_company_map(pszOrgTablePath: str) -> Dict[str, str]:
         pszPrefix: str = objMatch.group(1)
         if not pszPrefix.endswith("_"):
             pszPrefix += "_"
-        if pszPrefix not in objCompanyMap:
-            objCompanyMap[pszPrefix] = pszCompanyName
+        if pszPrefix not in objGroupMap:
+            objGroupMap[pszPrefix] = pszGroupName
 
-    return objCompanyMap
+    return objGroupMap
 
 
 def build_step0003_rows(
     objRows: List[List[str]],
-    objCompanyMap: Dict[str, str],
+    objGroupMap: Dict[str, str],
 ) -> List[List[str]]:
     if not objRows:
         return []
@@ -1905,7 +1905,7 @@ def build_step0003_rows(
                 objMatch = re.match(r"^(P\d{5}_|[A-OQ-Z]\d{3}_)", pszProjectName)
                 if objMatch is not None:
                     pszPrefix = objMatch.group(1)
-                    pszCompanyName = objCompanyMap.get(pszPrefix, "")
+                    pszCompanyName = objGroupMap.get(pszPrefix, "")
 
         objOutputRows.append([pszCompanyName] + (objRow[1:] if len(objRow) > 1 else []))
 
@@ -2571,14 +2571,14 @@ def create_pj_summary(
     write_tsv_rows(pszCumulativeStep0002Path, objCumulativeStep0002Rows)
 
     pszOrgTablePath: str = os.path.join(pszDirectory, "管轄PJ表.tsv")
-    objCompanyMap = load_org_table_company_map(pszOrgTablePath)
+    objGroupMap = load_org_table_group_map(pszOrgTablePath)
     objSingleStep0003Rows = build_step0003_rows(
         read_tsv_rows(pszSingleStep0002Path),
-        objCompanyMap,
+        objGroupMap,
     )
     objCumulativeStep0003Rows = build_step0003_rows(
         read_tsv_rows(pszCumulativeStep0002Path),
-        objCompanyMap,
+        objGroupMap,
     )
     pszSingleStep0003Path: str = os.path.join(
         pszDirectory,
@@ -2592,11 +2592,11 @@ def create_pj_summary(
     write_tsv_rows(pszCumulativeStep0003Path, objCumulativeStep0003Rows)
     objSingleStep0003Rows0005 = build_step0003_rows(
         read_tsv_rows(pszSingleStep0002Path0005),
-        objCompanyMap,
+        objGroupMap,
     )
     objCumulativeStep0003Rows0005 = build_step0003_rows(
         read_tsv_rows(pszCumulativeStep0002Path0005),
-        objCompanyMap,
+        objGroupMap,
     )
     pszSingleStep0003Path0005: str = os.path.join(
         pszDirectory,
@@ -2631,6 +2631,12 @@ def create_pj_summary(
         objCumulativeStep0004Rows0005,
     )
     write_tsv_rows(pszStep0005Path0005, objStep0005Rows0005)
+    pszStep0006Path0005: str = os.path.join(
+        pszDirectory,
+        f"0005_PJサマリ_step0006_単・累_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    objStep0006Rows0005 = build_step0006_rows_for_summary(objStep0005Rows0005)
+    write_tsv_rows(pszStep0006Path0005, objStep0006Rows0005)
     pszSingleStep0004Path: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0004_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
