@@ -2679,6 +2679,139 @@ def create_pj_summary(
     )
     pszSummaryStartMonth: str = f"{objStart[1]:02d}"
     pszSummaryEndMonth: str = f"{objEnd[1]:02d}"
+    if objStart == objEnd:
+        pszSingleSummaryPathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0001_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        write_tsv_rows(pszSingleSummaryPathCp, objSingleSummaryRows)
+        pszSingleSummaryPathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0001_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        write_tsv_rows(pszSingleSummaryPathCp0002, objSingleSummaryRows)
+        pszSingleSummaryStep0002PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0002_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objSingleSummaryStep0002RowsCp0002 = combine_company_sg_admin_columns(
+            read_tsv_rows(pszSingleSummaryPathCp0002)
+        )
+        write_tsv_rows(pszSingleSummaryStep0002PathCp0002, objSingleSummaryStep0002RowsCp0002)
+        pszSingleSummaryStep0002PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0002_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objSingleSummaryStep0002RowsCp = combine_company_sg_admin_columns(
+            read_tsv_rows(pszSingleSummaryPathCp)
+        )
+        write_tsv_rows(pszSingleSummaryStep0002PathCp, objSingleSummaryStep0002RowsCp)
+        pszSingleSummaryStep0003PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0003_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        pszSingleSummaryStep0003PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0003_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objGroupMapCpSingle = load_org_table_group_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+        objCompanyMapCpSingle = load_org_table_company_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+        objSingleSummaryStep0003RowsCp0002 = build_step0003_rows(
+            read_tsv_rows(pszSingleSummaryStep0002PathCp0002),
+            objGroupMapCpSingle,
+        )
+        write_tsv_rows(pszSingleSummaryStep0003PathCp0002, objSingleSummaryStep0003RowsCp0002)
+        objSingleSummaryStep0003RowsCp = build_step0003_rows(
+            read_tsv_rows(pszSingleSummaryStep0002PathCp),
+            objCompanyMapCpSingle,
+        )
+        write_tsv_rows(pszSingleSummaryStep0003PathCp, objSingleSummaryStep0003RowsCp)
+        pszSingleSummaryStep0004PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0004_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objSingleSummaryStep0004RowsCp0002 = build_step0004_rows_for_group_summary(
+            objSingleSummaryStep0003RowsCp0002
+        )
+        write_tsv_rows(pszSingleSummaryStep0004PathCp0002, objSingleSummaryStep0004RowsCp0002)
+        pszSingleSummaryStep0004VerticalPathCp0002: str = pszSingleSummaryStep0004PathCp0002.replace(
+            ".tsv",
+            "_vertical.tsv",
+        )
+        objSingleSummaryStep0004VerticalRowsCp0002 = transpose_rows(objSingleSummaryStep0004RowsCp0002)
+        write_tsv_rows(
+            pszSingleSummaryStep0004VerticalPathCp0002,
+            objSingleSummaryStep0004VerticalRowsCp0002,
+        )
+        objSingleSummaryStep0005VerticalRowsCp0002 = insert_ratio_rows_for_vertical(
+            objSingleSummaryStep0004VerticalRowsCp0002
+        )
+        pszSingleSummaryStep0005VerticalPathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0005_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月_vertical.tsv"
+            ),
+        )
+        write_tsv_rows(
+            pszSingleSummaryStep0005VerticalPathCp0002,
+            objSingleSummaryStep0005VerticalRowsCp0002,
+        )
+        pszSingleSummaryStep0004PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0004_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objSingleSummaryStep0004RowsCp = build_step0004_rows_for_summary(
+            objSingleSummaryStep0003RowsCp
+        )
+        write_tsv_rows(pszSingleSummaryStep0004PathCp, objSingleSummaryStep0004RowsCp)
+        pszSingleSummaryStep0004VerticalPathCp: str = pszSingleSummaryStep0004PathCp.replace(
+            ".tsv",
+            "_vertical.tsv",
+        )
+        objSingleSummaryStep0004VerticalRowsCp = transpose_rows(objSingleSummaryStep0004RowsCp)
+        write_tsv_rows(
+            pszSingleSummaryStep0004VerticalPathCp,
+            objSingleSummaryStep0004VerticalRowsCp,
+        )
+        objSingleSummaryStep0005VerticalRowsCp = insert_ratio_rows_for_vertical(
+            objSingleSummaryStep0004VerticalRowsCp
+        )
+        pszSingleSummaryStep0005VerticalPathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0005_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月_vertical.tsv"
+            ),
+        )
+        write_tsv_rows(
+            pszSingleSummaryStep0005VerticalPathCp,
+            objSingleSummaryStep0005VerticalRowsCp,
+        )
     pszCumulativeSummaryPathCp: str = os.path.join(
         pszDirectory,
         (
@@ -3721,6 +3854,9 @@ def create_cumulative_reports(pszPlPath: str) -> None:
         )
         create_cumulative_report(pszDirectory, "製造原価報告書", objRangeItem)
         create_pj_summary(pszPlPath, objRangeItem)
+    objMonths = build_month_sequence(objStart, objEnd)
+    for objMonth in objMonths:
+        create_pj_summary(pszPlPath, (objMonth, objMonth))
 
 
 def main(argv: list[str]) -> int:
