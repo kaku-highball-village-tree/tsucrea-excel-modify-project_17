@@ -2552,6 +2552,7 @@ def create_pj_summary(
         "3Cカンパニー販管費",
         "4Cカンパニー販管費",
         "事業開発カンパニー販管費",
+        "営業利益",
     ]
     objSingleSummaryRows: List[List[str]] = filter_rows_by_columns(
         objSingleRows,
@@ -2561,6 +2562,43 @@ def create_pj_summary(
         objCumulativeRows,
         objSummaryTargetColumns,
     )
+    pszSummaryStartMonth: str = f"{objStart[1]:02d}"
+    pszSummaryEndMonth: str = f"{objEnd[1]:02d}"
+    pszCumulativeSummaryPathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0001_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    write_tsv_rows(pszCumulativeSummaryPathCp, objCumulativeSummaryRows)
+    pszCumulativeSummaryStep0002PathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0002_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    objCumulativeSummaryStep0002RowsCp = combine_company_sg_admin_columns(
+        read_tsv_rows(pszCumulativeSummaryPathCp)
+    )
+    write_tsv_rows(pszCumulativeSummaryStep0002PathCp, objCumulativeSummaryStep0002RowsCp)
+    pszCumulativeSummaryStep0003PathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0003_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    objGroupMapCp = load_org_table_group_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+    objCumulativeSummaryStep0003RowsCp = build_step0003_rows(
+        read_tsv_rows(pszCumulativeSummaryStep0002PathCp),
+        objGroupMapCp,
+    )
+    write_tsv_rows(pszCumulativeSummaryStep0003PathCp, objCumulativeSummaryStep0003RowsCp)
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
