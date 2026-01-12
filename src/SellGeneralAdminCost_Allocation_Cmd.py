@@ -1964,6 +1964,54 @@ def build_step0004_rows_for_summary(objRows: List[List[str]]) -> List[List[str]]
     return objOutputRows
 
 
+def build_step0004_rows_for_group_summary(objRows: List[List[str]]) -> List[List[str]]:
+    if not objRows:
+        return []
+    objTargetNames: List[str] = [
+        "自社-その他",
+        "自社-施設運営",
+        "受託事業-その他",
+        "受託事業-施設運営",
+    ]
+    objTargetSet = set(objTargetNames)
+    objHeaderRow: List[str] = objRows[0]
+    objTotalRow: Optional[List[str]] = None
+    for objRow in objRows:
+        if not objRow:
+            continue
+        pszName = objRow[0].strip()
+        if pszName == "科目名":
+            objHeaderRow = objRow
+        elif pszName == "合計" and objTotalRow is None:
+            objTotalRow = objRow
+
+    iMaxColumns: int = max(len(objRow) for objRow in objRows) if objRows else 0
+    objTotalsByName: Dict[str, List[float]] = {
+        pszName: [0.0] * iMaxColumns for pszName in objTargetNames
+    }
+    for objRow in objRows[2:]:
+        if not objRow:
+            continue
+        pszName = objRow[0].strip()
+        if pszName not in objTargetSet:
+            continue
+        for iColumnIndex in range(1, iMaxColumns):
+            if iColumnIndex < len(objRow):
+                objTotalsByName[pszName][iColumnIndex] += parse_number(objRow[iColumnIndex])
+
+    objOutputRows: List[List[str]] = []
+    objOutputRows.append(list(objHeaderRow))
+    for pszName in objTargetNames:
+        objNewRow: List[str] = [""] * iMaxColumns
+        objNewRow[0] = pszName
+        for iColumnIndex in range(1, iMaxColumns):
+            objNewRow[iColumnIndex] = format_number(objTotalsByName[pszName][iColumnIndex])
+        objOutputRows.append(objNewRow)
+    if objTotalRow is not None:
+        objOutputRows.append(list(objTotalRow))
+    return objOutputRows
+
+
 def build_step0005_rows_for_summary(
     objSingleRows: List[List[str]],
     objCumulativeRows: List[List[str]],
@@ -2616,8 +2664,8 @@ def create_pj_summary(
         pszDirectory,
         f"0005_PJサマリ_step0004_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    objSingleStep0004Rows0005 = build_step0004_rows_for_summary(objSingleStep0003Rows0005)
-    objCumulativeStep0004Rows0005 = build_step0004_rows_for_summary(
+    objSingleStep0004Rows0005 = build_step0004_rows_for_group_summary(objSingleStep0003Rows0005)
+    objCumulativeStep0004Rows0005 = build_step0004_rows_for_group_summary(
         objCumulativeStep0003Rows0005
     )
     write_tsv_rows(pszSingleStep0004Path0005, objSingleStep0004Rows0005)
