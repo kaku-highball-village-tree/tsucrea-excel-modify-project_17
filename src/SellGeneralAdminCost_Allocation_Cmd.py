@@ -1935,6 +1935,55 @@ def load_org_table_group_map(pszOrgTablePath: str) -> Dict[str, str]:
     return objGroupMap
 
 
+def load_org_table_company_map(pszOrgTablePath: str) -> Dict[str, str]:
+    objCompanyMap: Dict[str, str] = {}
+    if not os.path.isfile(pszOrgTablePath):
+        return objCompanyMap
+
+    objRows = read_tsv_rows(pszOrgTablePath)
+    if not objRows:
+        return objCompanyMap
+
+    objHeader = objRows[0]
+    iCodeIndex = find_column_index(objHeader, "PJコード")
+    objCompanyColumnCandidates = ["計上カンパニー名", "計上カンパニー"]
+    iCompanyIndex = -1
+    for pszColumn in objCompanyColumnCandidates:
+        iCompanyIndex = find_column_index(objHeader, pszColumn)
+        if iCompanyIndex >= 0:
+            break
+
+    iStartIndex = 0
+    if iCodeIndex >= 0:
+        if iCompanyIndex < 0:
+            iCompanyIndex = iCodeIndex + 2
+        iStartIndex = 1
+    else:
+        iCodeIndex = 2
+        iCompanyIndex = 4
+
+    for objRow in objRows[iStartIndex:]:
+        if iCodeIndex >= len(objRow) or iCompanyIndex >= len(objRow):
+            continue
+        pszProjectCode: str = objRow[iCodeIndex].strip()
+        pszCompanyName: str = objRow[iCompanyIndex].strip()
+        if not pszProjectCode:
+            continue
+
+        objMatch = re.match(r"^(P\d{5}_|[A-OQ-Z]\d{3}_)", pszProjectCode)
+        if objMatch is None:
+            objMatch = re.match(r"^(P\d{5}|[A-OQ-Z]\d{3})", pszProjectCode)
+        if objMatch is None:
+            continue
+        pszPrefix: str = objMatch.group(1)
+        if not pszPrefix.endswith("_"):
+            pszPrefix += "_"
+        if pszPrefix not in objCompanyMap:
+            objCompanyMap[pszPrefix] = pszCompanyName
+
+    return objCompanyMap
+
+
 def build_step0003_rows(
     objRows: List[List[str]],
     objGroupMap: Dict[str, str],
@@ -2689,6 +2738,7 @@ def create_pj_summary(
         ),
     )
     objGroupMapCp = load_org_table_group_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+    objCompanyMapCp = load_org_table_company_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
     objCumulativeSummaryStep0003RowsCp0002 = build_step0003_rows(
         read_tsv_rows(pszCumulativeSummaryStep0002PathCp0002),
         objGroupMapCp,
@@ -2696,7 +2746,7 @@ def create_pj_summary(
     write_tsv_rows(pszCumulativeSummaryStep0003PathCp0002, objCumulativeSummaryStep0003RowsCp0002)
     objCumulativeSummaryStep0003RowsCp = build_step0003_rows(
         read_tsv_rows(pszCumulativeSummaryStep0002PathCp),
-        objGroupMapCp,
+        objCompanyMapCp,
     )
     write_tsv_rows(pszCumulativeSummaryStep0003PathCp, objCumulativeSummaryStep0003RowsCp)
     pszCumulativeSummaryStep0004PathCp: str = os.path.join(
