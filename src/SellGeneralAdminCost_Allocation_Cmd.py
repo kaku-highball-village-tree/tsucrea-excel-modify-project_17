@@ -2761,6 +2761,7 @@ def create_pj_summary(
         objCumulativeSummaryStep0003RowsCp0002
     )
     write_tsv_rows(pszCumulativeSummaryStep0004PathCp0002, objCumulativeSummaryStep0004RowsCp0002)
+    write_transposed_tsv(pszCumulativeSummaryStep0004PathCp0002)
     pszCumulativeSummaryStep0004PathCp: str = os.path.join(
         pszDirectory,
         (
