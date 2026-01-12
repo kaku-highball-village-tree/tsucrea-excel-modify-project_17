@@ -2320,6 +2320,7 @@ def make_sheet789_from_sheet4(
         pszNameColumn = "氏名"
 
     # 計上カンパニー列の候補を探す（旧: 計上グループ名/所属グループ名に準拠）。
+    # 既存ファイルとの互換性を保つため、旧名称も受け入れる。
     pszCompanyColumn: str = ""
     if "計上カンパニー名" in objSheet4Columns:
         pszCompanyColumn = "計上カンパニー名"

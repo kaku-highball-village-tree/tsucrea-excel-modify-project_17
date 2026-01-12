@@ -2639,6 +2639,15 @@ def create_pj_summary(
         ),
     )
     write_tsv_rows(pszCumulativeSummaryPathCp, objCumulativeSummaryRows)
+    pszCumulativeSummaryPathCp0002: str = os.path.join(
+        pszDirectory,
+        (
+            "0002_CP別_step0001_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    write_tsv_rows(pszCumulativeSummaryPathCp0002, objCumulativeSummaryRows)
     pszCumulativeSummaryStep0002PathCp: str = os.path.join(
         pszDirectory,
         (
