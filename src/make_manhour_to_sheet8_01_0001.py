@@ -4304,7 +4304,8 @@ def process_single_input(pszInputManhourCsvPath: str) -> int:
 
     # With_Salary.tsv の処理は削除
 
-    copy_pj_summary_0005_files(objBaseDirectoryPath, iFileYear, iFileMonth)
+    # 0005 step0001 は create_pj_summary() が生成するため、
+    # 0004 -> 0005 の一括コピーは行わない。
 
     print("OK: created files")
     for objTsvPath in sorted(objBaseDirectoryPath.glob("*.tsv")):
