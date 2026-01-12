@@ -2653,7 +2653,9 @@ def create_pj_summary(
         if os.path.isfile(pszCumulativePlPathHorizontal):
             objCumulativeRows = transpose_rows(read_tsv_rows(pszCumulativePlPathHorizontal))
 
-    if objSingleRows is None or objCumulativeRows is None:
+    if objSingleRows is None:
+        return
+    if objCumulativeRows is None and objStart != objEnd:
         return
 
     objSummaryTargetColumns: List[str] = [
@@ -2673,210 +2675,320 @@ def create_pj_summary(
         objSingleRows,
         objSummaryTargetColumns,
     )
-    objCumulativeSummaryRows: List[List[str]] = filter_rows_by_columns(
-        objCumulativeRows,
-        objSummaryTargetColumns,
-    )
     pszSummaryStartMonth: str = f"{objStart[1]:02d}"
     pszSummaryEndMonth: str = f"{objEnd[1]:02d}"
-    pszCumulativeSummaryPathCp: str = os.path.join(
-        pszDirectory,
-        (
-            "0001_CP別_step0001_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
-        ),
-    )
-    write_tsv_rows(pszCumulativeSummaryPathCp, objCumulativeSummaryRows)
-    pszCumulativeSummaryPathCp0002: str = os.path.join(
-        pszDirectory,
-        (
-            "0002_CP別_step0001_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
-        ),
-    )
-    write_tsv_rows(pszCumulativeSummaryPathCp0002, objCumulativeSummaryRows)
-    pszCumulativeSummaryStep0002PathCp0002: str = os.path.join(
-        pszDirectory,
-        (
-            "0002_CP別_step0002_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
-        ),
-    )
-    objCumulativeSummaryStep0002RowsCp0002 = combine_company_sg_admin_columns(
-        read_tsv_rows(pszCumulativeSummaryPathCp0002)
-    )
-    write_tsv_rows(pszCumulativeSummaryStep0002PathCp0002, objCumulativeSummaryStep0002RowsCp0002)
-    pszCumulativeSummaryStep0003PathCp0002: str = os.path.join(
-        pszDirectory,
-        (
-            "0002_CP別_step0003_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
-        ),
-    )
-    pszCumulativeSummaryStep0002PathCp: str = os.path.join(
-        pszDirectory,
-        (
-            "0001_CP別_step0002_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
-        ),
-    )
-    objCumulativeSummaryStep0002RowsCp = combine_company_sg_admin_columns(
-        read_tsv_rows(pszCumulativeSummaryPathCp)
-    )
-    write_tsv_rows(pszCumulativeSummaryStep0002PathCp, objCumulativeSummaryStep0002RowsCp)
-    pszCumulativeSummaryStep0003PathCp: str = os.path.join(
-        pszDirectory,
-        (
-            "0001_CP別_step0003_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
-        ),
-    )
-    objGroupMapCp = load_org_table_group_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
-    objCompanyMapCp = load_org_table_company_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
-    objCumulativeSummaryStep0003RowsCp0002 = build_step0003_rows(
-        read_tsv_rows(pszCumulativeSummaryStep0002PathCp0002),
-        objGroupMapCp,
-    )
-    write_tsv_rows(pszCumulativeSummaryStep0003PathCp0002, objCumulativeSummaryStep0003RowsCp0002)
-    objCumulativeSummaryStep0003RowsCp = build_step0003_rows(
-        read_tsv_rows(pszCumulativeSummaryStep0002PathCp),
-        objCompanyMapCp,
-    )
-    write_tsv_rows(pszCumulativeSummaryStep0003PathCp, objCumulativeSummaryStep0003RowsCp)
-    pszCumulativeSummaryStep0004PathCp0002: str = os.path.join(
-        pszDirectory,
-        (
-            "0002_CP別_step0004_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
-        ),
-    )
-    objCumulativeSummaryStep0004RowsCp0002 = build_step0004_rows_for_group_summary(
-        objCumulativeSummaryStep0003RowsCp0002
-    )
-    write_tsv_rows(pszCumulativeSummaryStep0004PathCp0002, objCumulativeSummaryStep0004RowsCp0002)
-    pszCumulativeSummaryStep0004VerticalPathCp0002: str = pszCumulativeSummaryStep0004PathCp0002.replace(
-        ".tsv",
-        "_vertical.tsv",
-    )
-    objCumulativeSummaryStep0004VerticalRowsCp0002 = transpose_rows(objCumulativeSummaryStep0004RowsCp0002)
-    write_tsv_rows(
-        pszCumulativeSummaryStep0004VerticalPathCp0002,
-        objCumulativeSummaryStep0004VerticalRowsCp0002,
-    )
-    objCumulativeSummaryStep0005VerticalRowsCp0002 = insert_ratio_rows_for_vertical(
-        objCumulativeSummaryStep0004VerticalRowsCp0002
-    )
-    pszCumulativeSummaryStep0005VerticalPathCp0002: str = os.path.join(
-        pszDirectory,
-        (
-            "0002_CP別_step0005_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月_vertical.tsv"
-        ),
-    )
-    write_tsv_rows(
-        pszCumulativeSummaryStep0005VerticalPathCp0002,
-        objCumulativeSummaryStep0005VerticalRowsCp0002,
-    )
-    pszCumulativeSummaryStep0004PathCp: str = os.path.join(
-        pszDirectory,
-        (
-            "0001_CP別_step0004_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
-        ),
-    )
-    objCumulativeSummaryStep0004RowsCp = build_step0004_rows_for_summary(
-        objCumulativeSummaryStep0003RowsCp
-    )
-    write_tsv_rows(pszCumulativeSummaryStep0004PathCp, objCumulativeSummaryStep0004RowsCp)
-    pszCumulativeSummaryStep0004VerticalPathCp: str = pszCumulativeSummaryStep0004PathCp.replace(
-        ".tsv",
-        "_vertical.tsv",
-    )
-    objCumulativeSummaryStep0004VerticalRowsCp = transpose_rows(objCumulativeSummaryStep0004RowsCp)
-    write_tsv_rows(
-        pszCumulativeSummaryStep0004VerticalPathCp,
-        objCumulativeSummaryStep0004VerticalRowsCp,
-    )
-    objCumulativeSummaryStep0005VerticalRowsCp = insert_ratio_rows_for_vertical(
-        objCumulativeSummaryStep0004VerticalRowsCp
-    )
-    pszCumulativeSummaryStep0005VerticalPathCp: str = os.path.join(
-        pszDirectory,
-        (
-            "0001_CP別_step0005_累計_損益計算書_"
-            f"{objStart[0]}年{pszSummaryStartMonth}月-"
-            f"{objEnd[0]}年{pszSummaryEndMonth}月_vertical.tsv"
-        ),
-    )
-    write_tsv_rows(
-        pszCumulativeSummaryStep0005VerticalPathCp,
-        objCumulativeSummaryStep0005VerticalRowsCp,
-    )
+    if objStart == objEnd:
+        pszSingleSummaryPathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0001_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        write_tsv_rows(pszSingleSummaryPathCp, objSingleSummaryRows)
+        pszSingleSummaryPathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0001_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        write_tsv_rows(pszSingleSummaryPathCp0002, objSingleSummaryRows)
+        pszSingleSummaryStep0002PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0002_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objSingleSummaryStep0002RowsCp0002 = combine_company_sg_admin_columns(
+            read_tsv_rows(pszSingleSummaryPathCp0002)
+        )
+        write_tsv_rows(pszSingleSummaryStep0002PathCp0002, objSingleSummaryStep0002RowsCp0002)
+        pszSingleSummaryStep0002PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0002_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objSingleSummaryStep0002RowsCp = combine_company_sg_admin_columns(
+            read_tsv_rows(pszSingleSummaryPathCp)
+        )
+        write_tsv_rows(pszSingleSummaryStep0002PathCp, objSingleSummaryStep0002RowsCp)
+        pszSingleSummaryStep0003PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0003_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        pszSingleSummaryStep0003PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0003_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objGroupMapCpSingle = load_org_table_group_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+        objCompanyMapCpSingle = load_org_table_company_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+        objSingleSummaryStep0003RowsCp0002 = build_step0003_rows(
+            read_tsv_rows(pszSingleSummaryStep0002PathCp0002),
+            objGroupMapCpSingle,
+        )
+        write_tsv_rows(pszSingleSummaryStep0003PathCp0002, objSingleSummaryStep0003RowsCp0002)
+        objSingleSummaryStep0003RowsCp = build_step0003_rows(
+            read_tsv_rows(pszSingleSummaryStep0002PathCp),
+            objCompanyMapCpSingle,
+        )
+        write_tsv_rows(pszSingleSummaryStep0003PathCp, objSingleSummaryStep0003RowsCp)
+        pszSingleSummaryStep0004PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0004_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objSingleSummaryStep0004RowsCp0002 = build_step0004_rows_for_group_summary(
+            objSingleSummaryStep0003RowsCp0002
+        )
+        write_tsv_rows(pszSingleSummaryStep0004PathCp0002, objSingleSummaryStep0004RowsCp0002)
+        pszSingleSummaryStep0004VerticalPathCp0002: str = pszSingleSummaryStep0004PathCp0002.replace(
+            ".tsv",
+            "_vertical.tsv",
+        )
+        objSingleSummaryStep0004VerticalRowsCp0002 = transpose_rows(objSingleSummaryStep0004RowsCp0002)
+        write_tsv_rows(
+            pszSingleSummaryStep0004VerticalPathCp0002,
+            objSingleSummaryStep0004VerticalRowsCp0002,
+        )
+        objSingleSummaryStep0005VerticalRowsCp0002 = insert_ratio_rows_for_vertical(
+            objSingleSummaryStep0004VerticalRowsCp0002
+        )
+        pszSingleSummaryStep0005VerticalPathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0005_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月_vertical.tsv"
+            ),
+        )
+        write_tsv_rows(
+            pszSingleSummaryStep0005VerticalPathCp0002,
+            objSingleSummaryStep0005VerticalRowsCp0002,
+        )
+        pszSingleSummaryStep0004PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0004_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月.tsv"
+            ),
+        )
+        objSingleSummaryStep0004RowsCp = build_step0004_rows_for_summary(
+            objSingleSummaryStep0003RowsCp
+        )
+        write_tsv_rows(pszSingleSummaryStep0004PathCp, objSingleSummaryStep0004RowsCp)
+        pszSingleSummaryStep0004VerticalPathCp: str = pszSingleSummaryStep0004PathCp.replace(
+            ".tsv",
+            "_vertical.tsv",
+        )
+        objSingleSummaryStep0004VerticalRowsCp = transpose_rows(objSingleSummaryStep0004RowsCp)
+        write_tsv_rows(
+            pszSingleSummaryStep0004VerticalPathCp,
+            objSingleSummaryStep0004VerticalRowsCp,
+        )
+        objSingleSummaryStep0005VerticalRowsCp = insert_ratio_rows_for_vertical(
+            objSingleSummaryStep0004VerticalRowsCp
+        )
+        pszSingleSummaryStep0005VerticalPathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0005_単月_損益計算書_"
+                f"{iEndYear}年{pszEndMonth}月_vertical.tsv"
+            ),
+        )
+        write_tsv_rows(
+            pszSingleSummaryStep0005VerticalPathCp,
+            objSingleSummaryStep0005VerticalRowsCp,
+        )
+    if objCumulativeRows is not None:
+        objCumulativeSummaryRows: List[List[str]] = filter_rows_by_columns(
+            objCumulativeRows,
+            objSummaryTargetColumns,
+        )
+        pszCumulativeSummaryPathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0001_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+            ),
+        )
+        write_tsv_rows(pszCumulativeSummaryPathCp, objCumulativeSummaryRows)
+        pszCumulativeSummaryPathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0001_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+            ),
+        )
+        write_tsv_rows(pszCumulativeSummaryPathCp0002, objCumulativeSummaryRows)
+        pszCumulativeSummaryStep0002PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0002_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+            ),
+        )
+        objCumulativeSummaryStep0002RowsCp0002 = combine_company_sg_admin_columns(
+            read_tsv_rows(pszCumulativeSummaryPathCp0002)
+        )
+        write_tsv_rows(pszCumulativeSummaryStep0002PathCp0002, objCumulativeSummaryStep0002RowsCp0002)
+        pszCumulativeSummaryStep0003PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0003_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+            ),
+        )
+        pszCumulativeSummaryStep0002PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0002_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+            ),
+        )
+        objCumulativeSummaryStep0002RowsCp = combine_company_sg_admin_columns(
+            read_tsv_rows(pszCumulativeSummaryPathCp)
+        )
+        write_tsv_rows(pszCumulativeSummaryStep0002PathCp, objCumulativeSummaryStep0002RowsCp)
+        pszCumulativeSummaryStep0003PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0003_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+            ),
+        )
+        objGroupMapCp = load_org_table_group_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+        objCompanyMapCp = load_org_table_company_map(os.path.join(pszDirectory, "管轄PJ表.tsv"))
+        objCumulativeSummaryStep0003RowsCp0002 = build_step0003_rows(
+            read_tsv_rows(pszCumulativeSummaryStep0002PathCp0002),
+            objGroupMapCp,
+        )
+        write_tsv_rows(pszCumulativeSummaryStep0003PathCp0002, objCumulativeSummaryStep0003RowsCp0002)
+        objCumulativeSummaryStep0003RowsCp = build_step0003_rows(
+            read_tsv_rows(pszCumulativeSummaryStep0002PathCp),
+            objCompanyMapCp,
+        )
+        write_tsv_rows(pszCumulativeSummaryStep0003PathCp, objCumulativeSummaryStep0003RowsCp)
+        pszCumulativeSummaryStep0004PathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0004_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+            ),
+        )
+        objCumulativeSummaryStep0004RowsCp0002 = build_step0004_rows_for_group_summary(
+            objCumulativeSummaryStep0003RowsCp0002
+        )
+        write_tsv_rows(pszCumulativeSummaryStep0004PathCp0002, objCumulativeSummaryStep0004RowsCp0002)
+        pszCumulativeSummaryStep0004VerticalPathCp0002: str = pszCumulativeSummaryStep0004PathCp0002.replace(
+            ".tsv",
+            "_vertical.tsv",
+        )
+        objCumulativeSummaryStep0004VerticalRowsCp0002 = transpose_rows(
+            objCumulativeSummaryStep0004RowsCp0002
+        )
+        write_tsv_rows(
+            pszCumulativeSummaryStep0004VerticalPathCp0002,
+            objCumulativeSummaryStep0004VerticalRowsCp0002,
+        )
+        objCumulativeSummaryStep0005VerticalRowsCp0002 = insert_ratio_rows_for_vertical(
+            objCumulativeSummaryStep0004VerticalRowsCp0002
+        )
+        pszCumulativeSummaryStep0005VerticalPathCp0002: str = os.path.join(
+            pszDirectory,
+            (
+                "0002_CP別_step0005_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月_vertical.tsv"
+            ),
+        )
+        write_tsv_rows(
+            pszCumulativeSummaryStep0005VerticalPathCp0002,
+            objCumulativeSummaryStep0005VerticalRowsCp0002,
+        )
+        pszCumulativeSummaryStep0004PathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0004_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+            ),
+        )
+        objCumulativeSummaryStep0004RowsCp = build_step0004_rows_for_summary(
+            objCumulativeSummaryStep0003RowsCp
+        )
+        write_tsv_rows(pszCumulativeSummaryStep0004PathCp, objCumulativeSummaryStep0004RowsCp)
+        pszCumulativeSummaryStep0004VerticalPathCp: str = pszCumulativeSummaryStep0004PathCp.replace(
+            ".tsv",
+            "_vertical.tsv",
+        )
+        objCumulativeSummaryStep0004VerticalRowsCp = transpose_rows(objCumulativeSummaryStep0004RowsCp)
+        write_tsv_rows(
+            pszCumulativeSummaryStep0004VerticalPathCp,
+            objCumulativeSummaryStep0004VerticalRowsCp,
+        )
+        objCumulativeSummaryStep0005VerticalRowsCp = insert_ratio_rows_for_vertical(
+            objCumulativeSummaryStep0004VerticalRowsCp
+        )
+        pszCumulativeSummaryStep0005VerticalPathCp: str = os.path.join(
+            pszDirectory,
+            (
+                "0001_CP別_step0005_累計_損益計算書_"
+                f"{objStart[0]}年{pszSummaryStartMonth}月-"
+                f"{objEnd[0]}年{pszSummaryEndMonth}月_vertical.tsv"
+            ),
+        )
+        write_tsv_rows(
+            pszCumulativeSummaryStep0005VerticalPathCp,
+            objCumulativeSummaryStep0005VerticalRowsCp,
+        )
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    pszCumulativeSummaryPath: str = os.path.join(
-        pszDirectory,
-        f"0004_PJサマリ_step0001_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
-    )
     write_tsv_rows(pszSingleSummaryPath, objSingleSummaryRows)
-    write_tsv_rows(pszCumulativeSummaryPath, objCumulativeSummaryRows)
     pszSingleSummaryPath0005: str = os.path.join(
         pszDirectory,
         f"0005_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    pszCumulativeSummaryPath0005: str = os.path.join(
-        pszDirectory,
-        f"0005_PJサマリ_step0001_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
-    )
     # 0005 は copy_pj_summary_0005_files によるコピーを行わず、
     # step0001 以降は必要なステップを本関数内で作成する。
     write_tsv_rows(pszSingleSummaryPath0005, objSingleSummaryRows)
-    write_tsv_rows(pszCumulativeSummaryPath0005, objCumulativeSummaryRows)
 
     objSingleStep0002Rows0005 = combine_company_sg_admin_columns(
         read_tsv_rows(pszSingleSummaryPath0005)
-    )
-    objCumulativeStep0002Rows0005 = combine_company_sg_admin_columns(
-        read_tsv_rows(pszCumulativeSummaryPath0005)
     )
     pszSingleStep0002Path0005: str = os.path.join(
         pszDirectory,
         f"0005_PJサマリ_step0002_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    pszCumulativeStep0002Path0005: str = os.path.join(
-        pszDirectory,
-        f"0005_PJサマリ_step0002_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
-    )
     write_tsv_rows(pszSingleStep0002Path0005, objSingleStep0002Rows0005)
-    write_tsv_rows(pszCumulativeStep0002Path0005, objCumulativeStep0002Rows0005)
 
     objSingleStep0002Rows = combine_company_sg_admin_columns(
         read_tsv_rows(pszSingleSummaryPath)
-    )
-    objCumulativeStep0002Rows = combine_company_sg_admin_columns(
-        read_tsv_rows(pszCumulativeSummaryPath)
     )
     pszSingleStep0002Path: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0002_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    pszCumulativeStep0002Path: str = os.path.join(
-        pszDirectory,
-        f"0004_PJサマリ_step0002_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
-    )
     write_tsv_rows(pszSingleStep0002Path, objSingleStep0002Rows)
-    write_tsv_rows(pszCumulativeStep0002Path, objCumulativeStep0002Rows)
 
     pszOrgTablePath: str = os.path.join(pszDirectory, "管轄PJ表.tsv")
     objGroupMap = load_org_table_group_map(pszOrgTablePath)
@@ -2884,51 +2996,90 @@ def create_pj_summary(
         read_tsv_rows(pszSingleStep0002Path),
         objGroupMap,
     )
-    objCumulativeStep0003Rows = build_step0003_rows(
-        read_tsv_rows(pszCumulativeStep0002Path),
-        objGroupMap,
-    )
     pszSingleStep0003Path: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0003_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    pszCumulativeStep0003Path: str = os.path.join(
-        pszDirectory,
-        f"0004_PJサマリ_step0003_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
-    )
     write_tsv_rows(pszSingleStep0003Path, objSingleStep0003Rows)
-    write_tsv_rows(pszCumulativeStep0003Path, objCumulativeStep0003Rows)
     objSingleStep0003Rows0005 = build_step0003_rows(
         read_tsv_rows(pszSingleStep0002Path0005),
-        objGroupMap,
-    )
-    objCumulativeStep0003Rows0005 = build_step0003_rows(
-        read_tsv_rows(pszCumulativeStep0002Path0005),
         objGroupMap,
     )
     pszSingleStep0003Path0005: str = os.path.join(
         pszDirectory,
         f"0005_PJサマリ_step0003_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    pszCumulativeStep0003Path0005: str = os.path.join(
-        pszDirectory,
-        f"0005_PJサマリ_step0003_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
-    )
     write_tsv_rows(pszSingleStep0003Path0005, objSingleStep0003Rows0005)
-    write_tsv_rows(pszCumulativeStep0003Path0005, objCumulativeStep0003Rows0005)
     pszSingleStep0004Path0005: str = os.path.join(
         pszDirectory,
         f"0005_PJサマリ_step0004_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
+    objSingleStep0004Rows0005 = build_step0004_rows_for_group_summary(objSingleStep0003Rows0005)
+    write_tsv_rows(pszSingleStep0004Path0005, objSingleStep0004Rows0005)
+    pszSingleStep0004Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0004_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    objSingleStep0004Rows = build_step0004_rows_for_summary(objSingleStep0003Rows)
+    write_tsv_rows(pszSingleStep0004Path, objSingleStep0004Rows)
+
+    if objCumulativeRows is None:
+        return
+
+    pszCumulativeSummaryPath: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0001_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszCumulativeSummaryPath, objCumulativeSummaryRows)
+    pszCumulativeSummaryPath0005: str = os.path.join(
+        pszDirectory,
+        f"0005_PJサマリ_step0001_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszCumulativeSummaryPath0005, objCumulativeSummaryRows)
+
+    objCumulativeStep0002Rows0005 = combine_company_sg_admin_columns(
+        read_tsv_rows(pszCumulativeSummaryPath0005)
+    )
+    pszCumulativeStep0002Path0005: str = os.path.join(
+        pszDirectory,
+        f"0005_PJサマリ_step0002_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszCumulativeStep0002Path0005, objCumulativeStep0002Rows0005)
+
+    objCumulativeStep0002Rows = combine_company_sg_admin_columns(
+        read_tsv_rows(pszCumulativeSummaryPath)
+    )
+    pszCumulativeStep0002Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0002_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszCumulativeStep0002Path, objCumulativeStep0002Rows)
+
+    objCumulativeStep0003Rows = build_step0003_rows(
+        read_tsv_rows(pszCumulativeStep0002Path),
+        objGroupMap,
+    )
+    pszCumulativeStep0003Path: str = os.path.join(
+        pszDirectory,
+        f"0004_PJサマリ_step0003_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszCumulativeStep0003Path, objCumulativeStep0003Rows)
+    objCumulativeStep0003Rows0005 = build_step0003_rows(
+        read_tsv_rows(pszCumulativeStep0002Path0005),
+        objGroupMap,
+    )
+    pszCumulativeStep0003Path0005: str = os.path.join(
+        pszDirectory,
+        f"0005_PJサマリ_step0003_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
+    )
+    write_tsv_rows(pszCumulativeStep0003Path0005, objCumulativeStep0003Rows0005)
     pszCumulativeStep0004Path0005: str = os.path.join(
         pszDirectory,
         f"0005_PJサマリ_step0004_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    objSingleStep0004Rows0005 = build_step0004_rows_for_group_summary(objSingleStep0003Rows0005)
     objCumulativeStep0004Rows0005 = build_step0004_rows_for_group_summary(
         objCumulativeStep0003Rows0005
     )
-    write_tsv_rows(pszSingleStep0004Path0005, objSingleStep0004Rows0005)
     write_tsv_rows(pszCumulativeStep0004Path0005, objCumulativeStep0004Rows0005)
     pszStep0005Path0005: str = os.path.join(
         pszDirectory,
@@ -2945,17 +3096,11 @@ def create_pj_summary(
     )
     objStep0006Rows0005 = build_step0006_rows_for_summary(objStep0005Rows0005)
     write_tsv_rows(pszStep0006Path0005, objStep0006Rows0005)
-    pszSingleStep0004Path: str = os.path.join(
-        pszDirectory,
-        f"0004_PJサマリ_step0004_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
-    )
     pszCumulativeStep0004Path: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0004_累計_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
     )
-    objSingleStep0004Rows = build_step0004_rows_for_summary(objSingleStep0003Rows)
     objCumulativeStep0004Rows = build_step0004_rows_for_summary(objCumulativeStep0003Rows)
-    write_tsv_rows(pszSingleStep0004Path, objSingleStep0004Rows)
     write_tsv_rows(pszCumulativeStep0004Path, objCumulativeStep0004Rows)
     pszStep0005Path: str = os.path.join(
         pszDirectory,
@@ -3720,8 +3865,10 @@ def create_cumulative_reports(pszPlPath: str) -> None:
             pszInputPrefix="損益計算書_販管費配賦",
         )
         create_cumulative_report(pszDirectory, "製造原価報告書", objRangeItem)
-    objPjSummaryRange = build_pj_summary_range(objRange)
-    create_pj_summary(pszPlPath, objPjSummaryRange)
+        create_pj_summary(pszPlPath, objRangeItem)
+    objMonths = build_month_sequence(objStart, objEnd)
+    for objMonth in objMonths:
+        create_pj_summary(pszPlPath, (objMonth, objMonth))
 
 
 def main(argv: list[str]) -> int:
