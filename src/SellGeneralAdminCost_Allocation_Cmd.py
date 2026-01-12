@@ -2677,6 +2677,7 @@ def create_pj_summary(
     )
     pszSummaryStartMonth: str = f"{objStart[1]:02d}"
     pszSummaryEndMonth: str = f"{objEnd[1]:02d}"
+    pszSingleSummaryStep0005VerticalPathCp: Optional[str] = None
     if objStart == objEnd:
         pszSingleSummaryPathCp: str = os.path.join(
             pszDirectory,
@@ -2810,6 +2811,7 @@ def create_pj_summary(
             pszSingleSummaryStep0005VerticalPathCp,
             objSingleSummaryStep0005VerticalRowsCp,
         )
+    pszCumulativeSummaryStep0005VerticalPathCp: Optional[str] = None
     if objCumulativeRows is not None:
         objCumulativeSummaryRows: List[List[str]] = filter_rows_by_columns(
             objCumulativeRows,
@@ -2959,6 +2961,13 @@ def create_pj_summary(
             pszCumulativeSummaryStep0005VerticalPathCp,
             objCumulativeSummaryStep0005VerticalRowsCp,
         )
+    copy_cp_step0005_vertical_files(
+        pszDirectory,
+        [
+            pszSingleSummaryStep0005VerticalPathCp,
+            pszCumulativeSummaryStep0005VerticalPathCp,
+        ],
+    )
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
@@ -3869,6 +3878,19 @@ def create_cumulative_reports(pszPlPath: str) -> None:
     objMonths = build_month_sequence(objStart, objEnd)
     for objMonth in objMonths:
         create_pj_summary(pszPlPath, (objMonth, objMonth))
+
+
+def copy_cp_step0005_vertical_files(pszDirectory: str, objPaths: List[Optional[str]]) -> None:
+    pszTargetDirectory: str = os.path.join(pszDirectory, "ByCompany_ManagementControl_step0005")
+    os.makedirs(pszTargetDirectory, exist_ok=True)
+    for pszPath in objPaths:
+        if not pszPath:
+            continue
+        if not os.path.isfile(pszPath):
+            continue
+        pszFileName: str = os.path.basename(pszPath)
+        pszTargetPath: str = os.path.join(pszTargetDirectory, pszFileName)
+        shutil.copy2(pszPath, pszTargetPath)
 
 
 def main(argv: list[str]) -> int:
