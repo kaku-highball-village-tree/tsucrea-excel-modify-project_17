@@ -3999,7 +3999,7 @@ def process_single_input(pszInputManhourCsvPath: str) -> int:
         return objCompanyNames[0]
 
     #
-    # 6. カンパニー別合計TSVの出力
+    # 6. グループ別合計TSVの出力
     #
     with open(pszSheet11CompanyTsvPath, "w", encoding="utf-8") as objSheet11CompanyFile:
         objSheet11CompanyRows: List[Tuple[str, str, str]] = []
