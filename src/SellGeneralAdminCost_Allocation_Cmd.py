@@ -2552,6 +2552,7 @@ def create_pj_summary(
         "3Cカンパニー販管費",
         "4Cカンパニー販管費",
         "事業開発カンパニー販管費",
+        "営業利益",
     ]
     objSingleSummaryRows: List[List[str]] = filter_rows_by_columns(
         objSingleRows,
@@ -2561,6 +2562,17 @@ def create_pj_summary(
         objCumulativeRows,
         objSummaryTargetColumns,
     )
+    pszSummaryStartMonth: str = f"{objStart[1]:02d}"
+    pszSummaryEndMonth: str = f"{objEnd[1]:02d}"
+    pszCumulativeSummaryPathCp: str = os.path.join(
+        pszDirectory,
+        (
+            "0001_CP別_step0001_累計_損益計算書_"
+            f"{objStart[0]}年{pszSummaryStartMonth}月-"
+            f"{objEnd[0]}年{pszSummaryEndMonth}月.tsv"
+        ),
+    )
+    write_tsv_rows(pszCumulativeSummaryPathCp, objCumulativeSummaryRows)
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
