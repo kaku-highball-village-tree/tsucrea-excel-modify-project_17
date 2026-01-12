@@ -185,7 +185,7 @@ def add_project_code_prefix_step0003(
     if not pszProjectName:
         return pszProjectCode
     # 3) 接頭辞候補(コード先頭部)を抽出し、形式をチェック（末尾に "_" が必須）
-    objCodeMatch: re.Match[str] | None = re.match(r"^(P\d{5}_|[A-Z]\d{3}_)", pszProjectCode)
+    objCodeMatch: re.Match[str] | None = re.match(r"^(P\d{5}_|[A-OQ-Z]\d{3}_)", pszProjectCode)
     if objCodeMatch is None:
         return pszProjectName
     pszCodePrefix: str = objCodeMatch.group(1)
@@ -195,7 +195,7 @@ def add_project_code_prefix_step0003(
     # 5) 他コード付与済みガード（正規表現）
     if re.match(r"^P\d{5}_", pszProjectName):
         return pszProjectName
-    if re.match(r"^[A-Z]\d{3}_", pszProjectName):
+    if re.match(r"^[A-OQ-Z]\d{3}_", pszProjectName):
         return pszProjectName
     # 6) 上記をすべて通過した場合のみ接頭辞を付加
     return pszCodePrefix + pszProjectName
@@ -2319,7 +2319,7 @@ def make_sheet789_from_sheet4(
     elif "氏名" in objSheet4Columns:
         pszNameColumn = "氏名"
 
-    # 計上カンパニー列の候補を探す（旧: 所属グループ名）
+    # 計上カンパニー列の候補を探す（旧: 計上グループ名/所属グループ名に準拠）
     pszCompanyColumn: str = ""
     if "計上カンパニー名" in objSheet4Columns:
         pszCompanyColumn = "計上カンパニー名"
