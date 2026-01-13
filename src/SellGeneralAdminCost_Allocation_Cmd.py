@@ -4157,36 +4157,31 @@ def create_cp_step0007_file(pszStep0006Path: str) -> None:
         iEndYear = int(objCumulativeMatch.group(3))
         iEndMonth = int(objCumulativeMatch.group(4))
         pszCompany = objCumulativeMatch.group(5)
-        if iStartMonth == 4:
-            iPriorStartYear = iStartYear - 1
-            iPriorStartMonth = 4
-            iPriorEndYear = iStartYear
-            iPriorEndMonth = 3
-        else:
-            iPriorStartYear = iStartYear
-            iPriorStartMonth = 4
-            iPriorEndYear = iStartYear
-            iPriorEndMonth = iStartMonth - 1
-        pszPriorLabel = (
-            f"{iPriorStartYear}年{iPriorStartMonth:02d}月-"
-            f"{iPriorEndYear}年{iPriorEndMonth:02d}月"
-        )
         pszCurrentLabel = (
             f"{iStartYear}年{iStartMonth:02d}月-"
             f"{iEndYear}年{iEndMonth:02d}月"
         )
-        pszPriorPath = os.path.join(
-            pszDirectory,
-            (
-                "0001_CP別_step0006_累計_損益計算書_"
-                f"{pszPriorLabel}_{pszCompany}_vertical.tsv"
-            ),
-        )
+        if iStartMonth != 4:
+            iPriorStartYear = iStartYear
+            iPriorStartMonth = 4
+            iPriorEndYear = iStartYear
+            iPriorEndMonth = iStartMonth - 1
+            pszPriorLabel = (
+                f"{iPriorStartYear}年{iPriorStartMonth:02d}月-"
+                f"{iPriorEndYear}年{iPriorEndMonth:02d}月"
+            )
+            pszPriorPath = os.path.join(
+                pszDirectory,
+                (
+                    "0001_CP別_step0006_累計_損益計算書_"
+                    f"{pszPriorLabel}_{pszCompany}_vertical.tsv"
+                ),
+            )
         pszOutputPath = os.path.join(
             pszDirectory,
             (
                 "0001_CP別_step0007_累計_損益計算書_"
-                f"{pszPriorLabel}_{pszCompany}_vertical.tsv"
+                f"{pszCurrentLabel}_{pszCompany}_vertical.tsv"
             ),
         )
     else:
