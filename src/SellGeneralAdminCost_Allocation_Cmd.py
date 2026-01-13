@@ -3991,7 +3991,7 @@ def build_company_step0006_files(pszStep0005Path: str) -> List[str]:
                 continue
             pszValue: str = objRow[iColumnIndex] if iColumnIndex < len(objRow) else ""
             objOutputRows.append([pszLabel, pszValue])
-        pszOutputPath: str = pszStep0005Path.replace(
+        pszOutputPath: str = pszStep0005Path.replace("_step0005_", "_step0006_").replace(
             "_vertical.tsv",
             f"_{pszCompany}_vertical.tsv",
         )
