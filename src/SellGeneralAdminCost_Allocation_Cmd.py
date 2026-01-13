@@ -2612,6 +2612,7 @@ def create_step0007_pl_cr(
 def create_pj_summary(
     pszPlPath: str,
     objRange: Tuple[Tuple[int, int], Tuple[int, int]],
+    create_step0007: bool = True,
 ) -> None:
     objStart, objEnd = objRange
     pszDirectory: str = os.path.dirname(pszPlPath)
@@ -2980,6 +2981,7 @@ def create_pj_summary(
                     pszDirectory,
                     [pszPriorCp0001Path],
                     "0001_CP別_step0006",
+                    create_step0007=False,
                 )
             pszPriorCp0002Path = create_empty_previous_fiscal_cp_step0005_vertical(
                 pszDirectory,
@@ -2992,6 +2994,7 @@ def create_pj_summary(
                     pszDirectory,
                     [pszPriorCp0002Path],
                     "0002_CP別_step0006",
+                    create_step0007=False,
                 )
         move_cp_step0001_to_step0004_vertical_files(
             pszDirectory,
@@ -3009,6 +3012,7 @@ def create_pj_summary(
         pszDirectory,
         [pszSingleSummaryStep0005VerticalPathCp, pszCumulativeSummaryStep0005VerticalPathCp],
         "0001_CP別_step0006",
+        create_step0007=create_step0007,
     )
     copy_group_step0006_files(
         pszDirectory,
@@ -3923,7 +3927,15 @@ def create_cumulative_reports(pszPlPath: str) -> None:
             pszInputPrefix="損益計算書_販管費配賦",
         )
         create_cumulative_report(pszDirectory, "製造原価報告書", objRangeItem)
-        create_pj_summary(pszPlPath, objRangeItem)
+        create_pj_summary(
+            pszPlPath,
+            objRangeItem,
+            create_step0007=objRangeItem
+            in (
+                (objFiscalARanges[-1] if objFiscalARanges else None),
+                (objFiscalBRanges[-1] if objFiscalBRanges else None),
+            ),
+        )
     objMonths = build_month_sequence(objStart, objEnd)
     for objMonth in objMonths:
         create_pj_summary(pszPlPath, (objMonth, objMonth))
@@ -3983,18 +3995,25 @@ def copy_company_step0006_files(
     pszDirectory: str,
     objPaths: List[Optional[str]],
     pszTargetFolder: str,
+    create_step0007: bool = True,
 ) -> None:
     pszTargetDirectory: str = os.path.join(pszDirectory, pszTargetFolder)
     os.makedirs(pszTargetDirectory, exist_ok=True)
     for pszPath in objPaths:
         if not pszPath or not os.path.isfile(pszPath):
             continue
-        for pszOutputPath in build_company_step0006_files(pszPath):
+        for pszOutputPath in build_company_step0006_files(
+            pszPath,
+            create_step0007=create_step0007,
+        ):
             pszTargetPath: str = os.path.join(pszTargetDirectory, os.path.basename(pszOutputPath))
             shutil.copy2(pszOutputPath, pszTargetPath)
 
 
-def build_company_step0006_files(pszStep0005Path: str) -> List[str]:
+def build_company_step0006_files(
+    pszStep0005Path: str,
+    create_step0007: bool = True,
+) -> List[str]:
     objRows = read_tsv_rows(pszStep0005Path)
     if not objRows:
         return []
@@ -4023,7 +4042,7 @@ def build_company_step0006_files(pszStep0005Path: str) -> List[str]:
         )
         write_tsv_rows(pszOutputPath, objOutputRows)
         objOutputPaths.append(pszOutputPath)
-        if os.path.basename(pszOutputPath).startswith("0001_CP別_step0006_"):
+        if create_step0007 and os.path.basename(pszOutputPath).startswith("0001_CP別_step0006_"):
             create_cp_step0007_file(pszOutputPath)
     return objOutputPaths
 
