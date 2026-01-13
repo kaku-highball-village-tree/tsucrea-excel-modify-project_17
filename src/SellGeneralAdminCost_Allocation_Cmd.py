@@ -2968,7 +2968,9 @@ def create_pj_summary(
             pszCumulativeSummaryStep0005VerticalPathCp,
             objCumulativeSummaryStep0005VerticalRowsCp,
         )
-        if objStart != objEnd and objStart[1] == 4 and objEnd[1] != 3:
+        if objStart != objEnd and (
+            (objStart[1] == 4 and objEnd[1] != 3) or (objStart[1] == 9 and objEnd[1] != 8)
+        ):
             pszPriorCp0001Path = create_empty_previous_fiscal_cp_step0005_vertical(
                 pszDirectory,
                 objStart,
@@ -2981,12 +2983,18 @@ def create_pj_summary(
                     [pszPriorCp0001Path],
                     "0001_CP別_step0006",
                 )
-            create_empty_previous_fiscal_cp_step0005_vertical(
+            pszPriorCp0002Path = create_empty_previous_fiscal_cp_step0005_vertical(
                 pszDirectory,
                 objStart,
                 objEnd,
                 "0002_CP別",
             )
+            if pszPriorCp0002Path:
+                copy_company_step0006_files(
+                    pszDirectory,
+                    [pszPriorCp0002Path],
+                    "0002_CP別_step0006",
+                )
         move_cp_step0001_to_step0004_vertical_files(
             pszDirectory,
             objStart,
