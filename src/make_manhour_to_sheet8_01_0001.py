@@ -47,6 +47,7 @@ def write_debug_error(pszMessage: str, objBaseDirectoryPath: Path | None = None)
 
 def copy_pj_summary_0005_files(objBaseDirectoryPath: Path, iYear: int, iMonth: int) -> None:
     # 0005 は create_pj_summary() で step を生成するため、コピーは行わない。
+    # 単月の CP 別出力は create_pj_summary() 側で単月 PL のみから生成する。
     return
 
 
