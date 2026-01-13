@@ -2974,7 +2974,11 @@ def create_pj_summary(
                 "0001_CP別",
             )
             if pszPriorCp0001Path:
-                copy_company_step0006_files(pszDirectory, [pszPriorCp0001Path])
+                copy_company_step0006_files(
+                    pszDirectory,
+                    [pszPriorCp0001Path],
+                    "0001_CP別_step0006",
+                )
             create_empty_previous_fiscal_cp_step0005_vertical(
                 pszDirectory,
                 objStart,
@@ -2996,6 +3000,11 @@ def create_pj_summary(
     copy_company_step0006_files(
         pszDirectory,
         [pszSingleSummaryStep0005VerticalPathCp, pszCumulativeSummaryStep0005VerticalPathCp],
+        "0001_CP別_step0006",
+    )
+    copy_group_step0006_files(
+        pszDirectory,
+        [pszSingleSummaryStep0005VerticalPathCp0002, pszCumulativeSummaryStep0005VerticalPathCp0002],
     )
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
@@ -3959,8 +3968,12 @@ def move_cp_step0001_to_step0004_vertical_files(
         shutil.move(pszPath, pszTargetPath)
 
 
-def copy_company_step0006_files(pszDirectory: str, objPaths: List[Optional[str]]) -> None:
-    pszTargetDirectory: str = os.path.join(pszDirectory, "0001_CP別_step0006")
+def copy_company_step0006_files(
+    pszDirectory: str,
+    objPaths: List[Optional[str]],
+    pszTargetFolder: str,
+) -> None:
+    pszTargetDirectory: str = os.path.join(pszDirectory, pszTargetFolder)
     os.makedirs(pszTargetDirectory, exist_ok=True)
     for pszPath in objPaths:
         if not pszPath or not os.path.isfile(pszPath):
@@ -4000,6 +4013,10 @@ def build_company_step0006_files(pszStep0005Path: str) -> List[str]:
         write_tsv_rows(pszOutputPath, objOutputRows)
         objOutputPaths.append(pszOutputPath)
     return objOutputPaths
+
+
+def copy_group_step0006_files(pszDirectory: str, objPaths: List[Optional[str]]) -> None:
+    copy_company_step0006_files(pszDirectory, objPaths, "0002_CP別_step0006")
 
 
 def create_empty_previous_fiscal_cp_step0005_vertical(
