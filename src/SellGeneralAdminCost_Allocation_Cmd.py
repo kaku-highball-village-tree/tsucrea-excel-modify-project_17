@@ -2991,6 +2991,10 @@ def create_pj_summary(
             pszCumulativeSummaryStep0005VerticalPathCp,
         ],
     )
+    copy_company_step0006_files(
+        pszDirectory,
+        [pszSingleSummaryStep0005VerticalPathCp, pszCumulativeSummaryStep0005VerticalPathCp],
+    )
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
         f"0004_PJサマリ_step0001_単月_損益計算書_{iEndYear}年{pszEndMonth}月.tsv",
@@ -3951,6 +3955,49 @@ def move_cp_step0001_to_step0004_vertical_files(
             continue
         pszTargetPath: str = os.path.join(pszTargetDirectory, os.path.basename(pszPath))
         shutil.move(pszPath, pszTargetPath)
+
+
+def copy_company_step0006_files(pszDirectory: str, objPaths: List[Optional[str]]) -> None:
+    pszTargetDirectory: str = os.path.join(pszDirectory, "0001_CP別_step0006")
+    os.makedirs(pszTargetDirectory, exist_ok=True)
+    for pszPath in objPaths:
+        if not pszPath or not os.path.isfile(pszPath):
+            continue
+        for pszOutputPath in build_company_step0006_files(pszPath):
+            pszTargetPath: str = os.path.join(pszTargetDirectory, os.path.basename(pszOutputPath))
+            shutil.copy2(pszOutputPath, pszTargetPath)
+
+
+def build_company_step0006_files(pszStep0005Path: str) -> List[str]:
+    objRows = read_tsv_rows(pszStep0005Path)
+    if not objRows:
+        return []
+    objHeader = objRows[0]
+    if len(objHeader) < 2:
+        return []
+    objCompanyIndices: List[Tuple[int, str]] = []
+    for iColumnIndex, pszName in enumerate(objHeader[1:], start=1):
+        if pszName == "" or pszName == "合計":
+            continue
+        objCompanyIndices.append((iColumnIndex, pszName))
+
+    objOutputPaths: List[str] = []
+    for iColumnIndex, pszCompany in objCompanyIndices:
+        objOutputRows: List[List[str]] = []
+        for iRowIndex, objRow in enumerate(objRows):
+            pszLabel: str = objRow[0] if objRow else ""
+            if iRowIndex == 0:
+                objOutputRows.append([pszLabel, pszCompany])
+                continue
+            pszValue: str = objRow[iColumnIndex] if iColumnIndex < len(objRow) else ""
+            objOutputRows.append([pszLabel, pszValue])
+        pszOutputPath: str = pszStep0005Path.replace(
+            "_vertical.tsv",
+            f"_{pszCompany}_vertical.tsv",
+        )
+        write_tsv_rows(pszOutputPath, objOutputRows)
+        objOutputPaths.append(pszOutputPath)
+    return objOutputPaths
 
 
 def create_empty_previous_fiscal_cp_step0005_vertical(
