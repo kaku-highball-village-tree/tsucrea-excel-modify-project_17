@@ -2967,12 +2967,14 @@ def create_pj_summary(
             objCumulativeSummaryStep0005VerticalRowsCp,
         )
         if objStart != objEnd and objStart[1] == 4 and objEnd[1] != 3:
-            create_empty_previous_fiscal_cp_step0005_vertical(
+            pszPriorCp0001Path = create_empty_previous_fiscal_cp_step0005_vertical(
                 pszDirectory,
                 objStart,
                 objEnd,
                 "0001_CP別",
             )
+            if pszPriorCp0001Path:
+                copy_company_step0006_files(pszDirectory, [pszPriorCp0001Path])
             create_empty_previous_fiscal_cp_step0005_vertical(
                 pszDirectory,
                 objStart,
@@ -4005,7 +4007,7 @@ def create_empty_previous_fiscal_cp_step0005_vertical(
     objStart: Tuple[int, int],
     objEnd: Tuple[int, int],
     pszCpPrefix: str,
-) -> None:
+) -> Optional[str]:
     iStartYear, iStartMonth = objStart
     iEndYear, iEndMonth = objEnd
     if iStartMonth == 4:
@@ -4019,7 +4021,7 @@ def create_empty_previous_fiscal_cp_step0005_vertical(
         iPriorEndYear = iStartYear
         iPriorEndMonth = 8
     else:
-        return
+        return None
 
     pszTemplatePath: str = os.path.join(
         pszDirectory,
@@ -4038,13 +4040,13 @@ def create_empty_previous_fiscal_cp_step0005_vertical(
         ),
     )
     if not os.path.isfile(pszTemplatePath):
-        return
+        return None
     if os.path.isfile(pszTargetPath):
-        return
+        return pszTargetPath
 
     objRows = read_tsv_rows(pszTemplatePath)
     if not objRows:
-        return
+        return None
     objOutputRows: List[List[str]] = []
     for iRowIndex, objRow in enumerate(objRows):
         if iRowIndex == 0:
@@ -4059,6 +4061,7 @@ def create_empty_previous_fiscal_cp_step0005_vertical(
         else:
             objOutputRows.append([pszLabel] + ["0"] * (len(objRow) - 1))
     write_tsv_rows(pszTargetPath, objOutputRows)
+    return pszTargetPath
 
 
 def main(argv: list[str]) -> int:
