@@ -2968,9 +2968,7 @@ def create_pj_summary(
             pszCumulativeSummaryStep0005VerticalPathCp,
             objCumulativeSummaryStep0005VerticalRowsCp,
         )
-        if objStart != objEnd and (
-            (objStart[1] == 4 and objEnd[1] != 3) or (objStart[1] == 9 and objEnd[1] != 8)
-        ):
+        if objStart != objEnd and objStart[1] == 4 and objEnd[1] != 3:
             pszPriorCp0001Path = create_empty_previous_fiscal_cp_step0005_vertical(
                 pszDirectory,
                 objStart,
