@@ -2678,6 +2678,7 @@ def create_pj_summary(
     pszSummaryStartMonth: str = f"{objStart[1]:02d}"
     pszSummaryEndMonth: str = f"{objEnd[1]:02d}"
     pszSingleSummaryStep0005VerticalPathCp: Optional[str] = None
+    pszSingleSummaryStep0005VerticalPathCp0002: Optional[str] = None
     if objStart == objEnd:
         pszSingleSummaryPathCp: str = os.path.join(
             pszDirectory,
@@ -2766,7 +2767,7 @@ def create_pj_summary(
         objSingleSummaryStep0005VerticalRowsCp0002 = insert_ratio_rows_for_vertical(
             objSingleSummaryStep0004VerticalRowsCp0002
         )
-        pszSingleSummaryStep0005VerticalPathCp0002: str = os.path.join(
+        pszSingleSummaryStep0005VerticalPathCp0002 = os.path.join(
             pszDirectory,
             (
                 "0002_CP別_step0005_単月_損益計算書_"
@@ -2817,6 +2818,7 @@ def create_pj_summary(
             objEnd,
         )
     pszCumulativeSummaryStep0005VerticalPathCp: Optional[str] = None
+    pszCumulativeSummaryStep0005VerticalPathCp0002: Optional[str] = None
     if objCumulativeRows is not None:
         objCumulativeSummaryRows: List[List[str]] = filter_rows_by_columns(
             objCumulativeRows,
@@ -2918,7 +2920,7 @@ def create_pj_summary(
         objCumulativeSummaryStep0005VerticalRowsCp0002 = insert_ratio_rows_for_vertical(
             objCumulativeSummaryStep0004VerticalRowsCp0002
         )
-        pszCumulativeSummaryStep0005VerticalPathCp0002: str = os.path.join(
+        pszCumulativeSummaryStep0005VerticalPathCp0002 = os.path.join(
             pszDirectory,
             (
                 "0002_CP別_step0005_累計_損益計算書_"
@@ -3004,7 +3006,10 @@ def create_pj_summary(
     )
     copy_group_step0006_files(
         pszDirectory,
-        [pszSingleSummaryStep0005VerticalPathCp0002, pszCumulativeSummaryStep0005VerticalPathCp0002],
+        [
+            pszSingleSummaryStep0005VerticalPathCp0002,
+            pszCumulativeSummaryStep0005VerticalPathCp0002,
+        ],
     )
     pszSingleSummaryPath: str = os.path.join(
         pszDirectory,
