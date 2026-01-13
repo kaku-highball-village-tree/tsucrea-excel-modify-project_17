@@ -2971,6 +2971,13 @@ def create_pj_summary(
                 pszDirectory,
                 objStart,
                 objEnd,
+                "0001_CP別",
+            )
+            create_empty_previous_fiscal_cp_step0005_vertical(
+                pszDirectory,
+                objStart,
+                objEnd,
+                "0002_CP別",
             )
         move_cp_step0001_to_step0004_vertical_files(
             pszDirectory,
@@ -3950,6 +3957,7 @@ def create_empty_previous_fiscal_cp_step0005_vertical(
     pszDirectory: str,
     objStart: Tuple[int, int],
     objEnd: Tuple[int, int],
+    pszCpPrefix: str,
 ) -> None:
     iStartYear, iStartMonth = objStart
     iEndYear, iEndMonth = objEnd
@@ -3969,7 +3977,7 @@ def create_empty_previous_fiscal_cp_step0005_vertical(
     pszTemplatePath: str = os.path.join(
         pszDirectory,
         (
-            "0001_CP別_step0005_累計_損益計算書_"
+            f"{pszCpPrefix}_step0005_累計_損益計算書_"
             f"{iStartYear}年{iStartMonth:02d}月-"
             f"{iEndYear}年{iEndMonth:02d}月_vertical.tsv"
         ),
@@ -3977,7 +3985,7 @@ def create_empty_previous_fiscal_cp_step0005_vertical(
     pszTargetPath: str = os.path.join(
         pszDirectory,
         (
-            "0001_CP別_step0005_累計_損益計算書_"
+            f"{pszCpPrefix}_step0005_累計_損益計算書_"
             f"{iPriorStartYear}年{iPriorStartMonth:02d}月-"
             f"{iPriorEndYear}年{iPriorEndMonth:02d}月_vertical.tsv"
         ),
